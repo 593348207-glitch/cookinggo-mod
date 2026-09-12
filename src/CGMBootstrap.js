@@ -15,7 +15,7 @@
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
 ;(function () {
-  var VERSION = "1.0.0";
+  var VERSION = "1.0.1";
   var TAG = "[CookingMod]";
 
   function log(s) {
@@ -55,9 +55,16 @@
     cands.push(base + "../cookingmod/");
     cands.push(base + "../../cookingmod/");
   }
+  function canCreate(dir) { try { fs.createDirectory(dir); return true; } catch (e) { return false; } }
   var DIR = null;
   for (var i = 0; i < cands.length; i++) {
-    if (readFile(cands[i] + "mod.json")) { DIR = cands[i]; break; }
+    var d = cands[i];
+    canCreate(d);
+    if (readFile(d + "mod.json")) { DIR = d; break; }
+    if (writeJson(d + "js_probe.json", { ts: now(), version: VERSION }) && readFile(d + "js_probe.json")) {
+      DIR = d;
+      break;
+    }
   }
   if (!DIR) {
     log("mailbox not found, candidates=" + JSON.stringify(cands));

@@ -164,6 +164,18 @@ static BOOL CGMIsTargetPath(NSString *path) {
     return NO;
 }
 
+/* Diagnostics: remember every distinct ".js" file the app reads, so a mismatched
+   bundle layout is visible in the on-device log instead of failing silently. */
+static NSMutableSet<NSString *> *gSeenJS = nil;
+static void CGMNoteJSReadOnce(NSString *path) {
+    if (![path isKindOfClass:[NSString class]] || path.length == 0) { return; }
+    if (![[path pathExtension] isEqualToString:@"js"]) { return; }
+    if (!gSeenJS) { gSeenJS = [NSMutableSet set]; }
+    if ([gSeenJS containsObject:path]) { return; }
+    if (gSeenJS.count >= 40) { return; }
+    [gSeenJS addObject:path];
+    CGMLog(@"observed JS read: %@", path);
+}
 static BOOL CGMIsTargetPathC(const char *p) {
     if (!p) { return NO; }
     if (!strstr(p, "scriptBundle")) { return NO; }
@@ -206,6 +218,7 @@ static NSData *(*gOrigDataWithContentsOfFile)(id, SEL, NSString *);
 static NSData *CGMDataWithContentsOfFile(id self, SEL _cmd, NSString *path) {
     NSData *d = gOrigDataWithContentsOfFile ? gOrigDataWithContentsOfFile(self, _cmd, path) : nil;
     if (CGMIsTargetPath(path)) { return CGMInjectedData(d, path); }
+    CGMNoteJSReadOnce(path);
     return d;
 }
 
