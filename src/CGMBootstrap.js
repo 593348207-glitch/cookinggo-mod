@@ -15,7 +15,7 @@
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
 ;(function () {
-  var VERSION = "1.0.2";
+  var VERSION = "1.0.4";
   var TAG = "[CookingMod]";
 
   function log(s) {
@@ -82,19 +82,34 @@
     try { return window.__require(name); } catch (e) { return null; }
   }
 
+  /* Evidence (static analysis + on-device probe, 2026-09-12):
+     __require("Game")    -> cc.Component scene controller, NOT the data holder
+     __require("Manager") -> the manager singleton whose static props are
+                             assigned in _loadAllManagers(): PlayerData,
+                             MapData, ServerData, Auth, Pay, ...            */
+  var gBindWhy = "not attempted";
+
   function bind() {
     if (G && PD && MD && APP && CORE) { return true; }
-    var g = req("Game");
-    if (!g || !g.default) { return false; }
+    var m = req("Manager");
+    if (!m || !m.default) { gBindWhy = "module Manager missing"; return false; }
     var app = req("AppConst");
-    if (!app || !app.EVENT_ID) { return false; }
+    if (!app || !app.EVENT_ID) { gBindWhy = "AppConst.EVENT_ID missing"; return false; }
     var core = req("Core");
-    if (!core || !core.default) { return false; }
-    var pd = g.default.PlayerData, md = g.default.MapData;
-    if (!pd || !md) { return false; }
-    try { if (!pd.playerInfo) { return false; } } catch (e) { return false; }
-    G = g.default; APP = app; CORE = core.default; PD = pd; MD = md;
-    log("bound: PlayerData ready, EVENT_ID ready, Event bus ready");
+    if (!core || !core.default) { gBindWhy = "module Core missing"; return false; }
+    var mgr = m.default;
+    var pd = mgr.PlayerData, md = mgr.MapData;
+    if (!pd) { gBindWhy = "Manager.PlayerData missing"; return false; }
+    if (!md) { gBindWhy = "Manager.MapData missing"; return false; }
+    try {
+      if (!pd.playerInfo) { gBindWhy = "PlayerData.playerInfo not loaded yet"; return false; }
+    } catch (e) {
+      gBindWhy = "PlayerData.playerInfo threw: " + str(e);
+      return false;
+    }
+    G = mgr; APP = app; CORE = core.default; PD = pd; MD = md;
+    gBindWhy = "ok";
+    log("bound: Manager.PlayerData + EVENT_ID + Core.Event ready");
     return true;
   }
 
@@ -142,7 +157,7 @@
 
   function snapshot() {
     if (!bind()) { return null; }
-    var t = table(), out = { ready: true, ts: now(), version: VERSION };
+    var t = table(), out = { ready: true, ts: now(), version: VERSION, why: gBindWhy };
     for (var k in t) {
       try { out[k] = Number(t[k].get()); } catch (e) { out[k] = null; out[k + "_err"] = str(e); }
     }
@@ -191,8 +206,23 @@
     try {
       var g = req("Game");
       out.gameDefault = !!(g && g.default);
-      if (g && g.default) { out.managers = Object.keys(g.default); }
+      if (g && g.default) { out.gameKeys = Object.keys(g.default); }
     } catch (e) { out.gameErr = str(e); }
+    try {
+      var m = req("Manager");
+      out.managerDefault = !!(m && m.default);
+      if (m && m.default) { out.managerKeys = Object.keys(m.default); }
+    } catch (e) { out.managerErr = str(e); }
+    try {
+      var mgr = req("Manager").default;
+      out.hasPlayerData = !!(mgr && mgr.PlayerData);
+      out.hasMapData = !!(mgr && mgr.MapData);
+      if (mgr && mgr.PlayerData) {
+        out.gemNum = mgr.PlayerData.gemNum;
+        out.powerNum = mgr.PlayerData.powerNum;
+      }
+    } catch (e) { out.playerDataErr = str(e); }
+    out.bindWhy = gBindWhy;
     try { out.eventIdCount = Object.keys(req("AppConst").EVENT_ID).length; } catch (e) { out.eventIdErr = str(e); }
     try { out.coreEvent = !!(req("Core").default.Event); } catch (e) { out.coreErr = str(e); }
     try { out.playerInfoKeys = Object.keys(PD.playerInfo).length; } catch (e) { out.playerInfoErr = str(e); }
@@ -226,7 +256,7 @@
           log("probe written");
         }
       } else {
-        writeJson(DIR + "state.json", { ready: false, ts: now(), version: VERSION, ticks: ticks });
+        writeJson(DIR + "state.json", { ready: false, ts: now(), version: VERSION, ticks: ticks, why: gBindWhy });
       }
     } catch (e) {
       log("tick error: " + str(e));

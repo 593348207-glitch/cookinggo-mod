@@ -188,6 +188,22 @@ static void CGMEnsureMailbox(void) {
     CGMLog(@"mailbox ready at %@", gMailboxPath);
 }
 
+/* ============================== hit counters =============================== */
+
+enum { kCGMHitDataClass = 0, kCGMHitDataClassOpts, kCGMHitDataInit, kCGMHitDataInitOpts,
+       kCGMHitFmContents, kCGMHitStrClass, kCGMHitStrInit, kCGMHitStrInitUsed,
+       kCGMHitFopen, kCGMHitOpen, kCGMHitOpenat, kCGMHitGuarded, kCGMHitDprotected,
+       kCGMHitCount };
+static const char *kCGMHitNames[kCGMHitCount] = {
+    "NSData.dataWithContentsOfFile", "NSData.dataWithContentsOfFile:options:error:",
+    "NSData.initWithContentsOfFile", "NSData.initWithContentsOfFile:options:error:",
+    "NSFileManager.contentsAtPath", "NSString.stringWithContentsOfFile:encoding:error:",
+    "NSString.initWithContentsOfFile:encoding:error:", "NSString.initWithContentsOfFile:usedEncoding:error:",
+    "fopen", "open", "openat", "guarded_open_np", "open_dprotected_np"
+};
+static volatile int gHits[kCGMHitCount];
+static void CGMBumpHit(int i) { if (i >= 0 && i < kCGMHitCount) { __sync_fetch_and_add(&gHits[i], 1); } }
+
 /* ============================== JS injection ============================== */
 
 static NSString *gJSPayload = nil;
@@ -262,6 +278,7 @@ static NSString *CGMTempScriptPath(void) {
 static NSData *(*gOrigDataWithContentsOfFile)(id, SEL, NSString *);
 static NSData *CGMDataWithContentsOfFile(id self, SEL _cmd, NSString *path) {
     NSData *d = gOrigDataWithContentsOfFile ? gOrigDataWithContentsOfFile(self, _cmd, path) : nil;
+    CGMBumpHit(kCGMHitDataClass);
     if (CGMIsTargetPath(path)) { return CGMInjectedData(d, path); }
     CGMNoteJSReadOnce(path);
     return d;
@@ -270,6 +287,7 @@ static NSData *CGMDataWithContentsOfFile(id self, SEL _cmd, NSString *path) {
 static NSData *(*gOrigDataWithContentsOfFileOpts)(id, SEL, NSString *, NSDataReadingOptions, NSError **);
 static NSData *CGMDataWithContentsOfFileOpts(id self, SEL _cmd, NSString *path, NSDataReadingOptions opts, NSError **err) {
     NSData *d = gOrigDataWithContentsOfFileOpts ? gOrigDataWithContentsOfFileOpts(self, _cmd, path, opts, err) : nil;
+    CGMBumpHit(kCGMHitDataClassOpts);
     if (CGMIsTargetPath(path)) { return CGMInjectedData(d, path); }
     CGMNoteJSReadOnce(path);
     return d;
@@ -278,6 +296,7 @@ static NSData *CGMDataWithContentsOfFileOpts(id self, SEL _cmd, NSString *path, 
 static id (*gOrigInitWithContentsOfFile)(id, SEL, NSString *);
 static id CGMInitWithContentsOfFile(id self, SEL _cmd, NSString *path) {
     id d = gOrigInitWithContentsOfFile ? gOrigInitWithContentsOfFile(self, _cmd, path) : nil;
+    CGMBumpHit(kCGMHitDataInit);
     if (!CGMIsTargetPath(path)) { CGMNoteJSReadOnce(path); return d; }
     if ([d isKindOfClass:[NSData class]]) {
         NSData *inj = CGMInjectedData(d, path);
@@ -289,6 +308,7 @@ static id CGMInitWithContentsOfFile(id self, SEL _cmd, NSString *path) {
 static NSData *(*gOrigContentsAtPath)(id, SEL, NSString *);
 static NSData *CGMContentsAtPath(id self, SEL _cmd, NSString *path) {
     NSData *d = gOrigContentsAtPath ? gOrigContentsAtPath(self, _cmd, path) : nil;
+    CGMBumpHit(kCGMHitFmContents);
     if (CGMIsTargetPath(path)) { return CGMInjectedData(d, path); }
     CGMNoteJSReadOnce(path);
     return d;
@@ -297,11 +317,55 @@ static NSData *CGMContentsAtPath(id self, SEL _cmd, NSString *path) {
 static NSString *(*gOrigStringContents)(id, SEL, NSString *, NSStringEncoding, NSError **);
 static NSString *CGMStringContents(id self, SEL _cmd, NSString *path, NSStringEncoding enc, NSError **err) {
     NSString *s = gOrigStringContents ? gOrigStringContents(self, _cmd, path, enc, err) : nil;
+    CGMBumpHit(kCGMHitStrClass);
     if (!CGMIsTargetPath(path)) { CGMNoteJSReadOnce(path); return s; }
     if (s.length) {
         return [s stringByAppendingFormat:@"%@%@", kCGMInjectMark, gJSPayload ?: @""];
     }
     return s;
+}
+
+/* NSString / NSData -initWithContentsOf... : the surface cocos2d-x
+   FileUtilsApple::getStringFromFile actually uses for text assets. */
+static id (*gOrigDataInitContentsOpts)(id, SEL, NSString *, NSDataReadingOptions, NSError **);
+static id CGMDataInitContentsOpts(id self, SEL _cmd, NSString *path, NSDataReadingOptions opts, NSError **err) {
+    id d = gOrigDataInitContentsOpts ? gOrigDataInitContentsOpts(self, _cmd, path, opts, err) : nil;
+    CGMBumpHit(kCGMHitDataInitOpts);
+    if (!CGMIsTargetPath(path)) { CGMNoteJSReadOnce(path); return d; }
+    if ([d isKindOfClass:[NSData class]]) {
+        NSData *inj = CGMInjectedData(d, path);
+        if (inj != d) { return (__bridge id)CFBridgingRetain(inj); }
+    }
+    return d;
+}
+
+static id (*gOrigStrInitContents)(id, SEL, NSString *, NSStringEncoding, NSError **);
+static id CGMStrInitContents(id self, SEL _cmd, NSString *path, NSStringEncoding enc, NSError **err) {
+    id r = gOrigStrInitContents ? gOrigStrInitContents(self, _cmd, path, enc, err) : nil;
+    CGMBumpHit(kCGMHitStrInit);
+    if (!CGMIsTargetPath(path)) { CGMNoteJSReadOnce(path); return r; }
+    if ([r isKindOfClass:[NSString class]] && gJSPayload.length) {
+        NSString *merged = [r stringByAppendingFormat:@"%@%@", kCGMInjectMark, gJSPayload];
+        if (!gInjectLogDone) {
+            gInjectLogDone = YES;
+            CGMLog(@"JS injected through NSString initWithContentsOfFile:encoding:error: (+%lu bytes)",
+                   (unsigned long)gJSPayload.length);
+        }
+        return (__bridge id)CFBridgingRetain(merged);
+    }
+    return r;
+}
+
+static id (*gOrigStrInitContentsUsed)(id, SEL, NSString *, NSStringEncoding *, NSError **);
+static id CGMStrInitContentsUsed(id self, SEL _cmd, NSString *path, NSStringEncoding *enc, NSError **err) {
+    id r = gOrigStrInitContentsUsed ? gOrigStrInitContentsUsed(self, _cmd, path, enc, err) : nil;
+    CGMBumpHit(kCGMHitStrInitUsed);
+    if (!CGMIsTargetPath(path)) { CGMNoteJSReadOnce(path); return r; }
+    if ([r isKindOfClass:[NSString class]] && gJSPayload.length) {
+        NSString *merged = [r stringByAppendingFormat:@"%@%@", kCGMInjectMark, gJSPayload];
+        return (__bridge id)CFBridgingRetain(merged);
+    }
+    return r;
 }
 
 static void CGMInstallObjCHooks(void) {
@@ -320,7 +384,17 @@ static void CGMInstallObjCHooks(void) {
     Method m5 = class_getClassMethod([NSString class], @selector(stringWithContentsOfFile:encoding:error:));
     if (m5) { gOrigStringContents = (void *)method_getImplementation(m5); method_setImplementation(m5, (IMP)CGMStringContents); }
 
-    CGMLog(@"ObjC hooks installed (NSData x3, NSFileManager x1, NSString x1)");
+    Method m6 = class_getInstanceMethod([NSData class], @selector(initWithContentsOfFile:options:error:));
+    if (m6) { gOrigDataInitContentsOpts = (void *)method_getImplementation(m6); method_setImplementation(m6, (IMP)CGMDataInitContentsOpts); }
+
+    Method m7 = class_getInstanceMethod([NSString class], @selector(initWithContentsOfFile:encoding:error:));
+    if (m7) { gOrigStrInitContents = (void *)method_getImplementation(m7); method_setImplementation(m7, (IMP)CGMStrInitContents); }
+
+    Method m8 = class_getInstanceMethod([NSString class], @selector(initWithContentsOfFile:usedEncoding:error:));
+    if (m8) { gOrigStrInitContentsUsed = (void *)method_getImplementation(m8); method_setImplementation(m8, (IMP)CGMStrInitContentsUsed); }
+
+    CGMLog(@"ObjC hooks installed (NSData x4, NSFileManager x1, NSString x3) [m6=%d m7=%d m8=%d]",
+           m6 ? 1 : 0, m7 ? 1 : 0, m8 ? 1 : 0);
 }/* --- POSIX level hooks (installed only when MSHookFunction is reachable) --- */
 
 typedef void *(*MSHookFunctionPtr)(void *symbol, void *replace, void **result);
@@ -966,6 +1040,37 @@ static void CGMTick(void) {
         if (hello && !gEngineReady) {
             [gVC appendLog:[NSString stringWithFormat:@"[JS] bootstrap v%@ 已注入，等待引擎 init",
                             hello[@"version"] ?: @"?"]];
+        }
+
+        /* Hook-hit telemetry: tells us which file-read surface the engine uses. */
+        {
+            static int lastReported[kCGMHitCount];
+            static int reportBudget = 40;
+            NSMutableArray *parts = [NSMutableArray array];
+            BOOL changed = NO;
+            for (int i = 0; i < kCGMHitCount; i++) {
+                int v = gHits[i];
+                if (v > 0) { [parts addObject:[NSString stringWithFormat:@"%s=%d", kCGMHitNames[i], v]]; }
+                if (v != lastReported[i]) { changed = YES; lastReported[i] = v; }
+            }
+            if (changed && reportBudget-- > 0) {
+                CGMLog(@"hook hits: %@", parts.count ? [parts componentsJoinedByString:@" "] : @"(none)");
+                [gVC appendLog:[NSString stringWithFormat:@"[hits] %@",
+                                parts.count ? [parts componentsJoinedByString:@" "] : @"(none)"]];
+            }
+            static int lastSig = -1;
+            int sig = 0;
+            for (int i = 0; i < kCGMHitCount; i++) { sig = sig * 31 + gHits[i]; }
+            if (sig != lastSig || lastSig == -1) {
+                lastSig = sig;
+                NSMutableDictionary *d = [NSMutableDictionary dictionary];
+                for (int i = 0; i < kCGMHitCount; i++) {
+                    d[[NSString stringWithUTF8String:kCGMHitNames[i]]] = @(gHits[i]);
+                }
+                d[@"injected"] = @(gInjectLogDone);
+                d[@"tempCopy"] = @(gTempScriptPath != nil);
+                CGMWriteJSON(d, [gChosenMailbox stringByAppendingPathComponent:@"hits.json"]);
+            }
         }
         [gVC refreshStatus];
     } @catch (NSException *e) {
