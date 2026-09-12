@@ -825,8 +825,11 @@ static const int kCGMResCount = 4;
     [self setPanelVisible:!self.panelVisible];
 }
 
+/* NOTE: `panelVisible` is a property, so `self.panelVisible = x` inside this
+   custom setter would call this very method again and recurse until the stack
+   blows (that is exactly what killed 1.0.6). Write the backing ivar instead. */
 - (void)setPanelVisible:(BOOL)visible {
-    self.panelVisible = visible;
+    _panelVisible = visible;
     self.panel.hidden = !visible;
     CGMLog(@"panel %@ (view=%.0fx%.0f window=%.0fx%.0f ball=%.0f,%.0f)",
            visible ? @"OPENED" : @"closed", self.view.bounds.size.width, self.view.bounds.size.height,
