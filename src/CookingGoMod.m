@@ -27,6 +27,7 @@
 #import <dlfcn.h>
 #import <string.h>
 #import <stdarg.h>
+#import <math.h>
 #import <stdlib.h>
 #import <unistd.h>
 #import <fcntl.h>
@@ -92,6 +93,7 @@ static int gCfgObjc    = 1;   /* ObjC file-API hooks: the JS injection path     
 static int gCfgPosix   = 0;   /* POSIX open-family hooks: invasive, opt-in       */
 static int gCfgOverlay = 1;   /* floating panel UI                               */
 static int gCfgPanelOpen = 0; /* open the panel at launch (layout diagnostics)   */
+static int gCfgRot = 90;      /* rotate the overlay to match the game's drawing  */
 
 static void CGMApplyConfigLine(const char *line) {
     if (!line) { return; }
@@ -110,6 +112,7 @@ static void CGMApplyConfigLine(const char *line) {
     else if (strcmp(key, "posix") == 0) { gCfgPosix = val; }
     else if (strcmp(key, "overlay") == 0) { gCfgOverlay = val; }
     else if (strcmp(key, "panel") == 0) { gCfgPanelOpen = val; }
+    else if (strcmp(key, "rot") == 0) { gCfgRot = atoi(eq + 1); }
 }
 
 static void CGMReadConfigFile(const char *path) {
@@ -129,7 +132,7 @@ static void CGMReadConfig(void) {
         NSString *p = [home stringByAppendingPathComponent:@"Documents/cookingmod/cfg.txt"];
         CGMReadConfigFile(p.fileSystemRepresentation);
     }
-    CGMLog(@"config: objc=%d posix=%d overlay=%d panel=%d", gCfgObjc, gCfgPosix, gCfgOverlay, gCfgPanelOpen);
+    CGMLog(@"config: objc=%d posix=%d overlay=%d panel=%d rot=%d", gCfgObjc, gCfgPosix, gCfgOverlay, gCfgPanelOpen, gCfgRot);
 }
 
 /* ============================== write helpers ============================= */
@@ -574,6 +577,7 @@ static const int kCGMResCount = 4;
 @end
 
 @interface CGMViewController : UIViewController <UITextFieldDelegate>
+@property (nonatomic, strong) UIView *stage;
 @property (nonatomic, strong) UIButton *ball;
 @property (nonatomic, strong) UIView *panel;
 @property (nonatomic, strong) UIView *header;
@@ -603,6 +607,10 @@ static const int kCGMResCount = 4;
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor clearColor];
     self.view.userInteractionEnabled = YES;
+    self.stage = [[UIView alloc] initWithFrame:CGRectZero];
+    self.stage.backgroundColor = [UIColor clearColor];
+    self.stage.autoresizingMask = UIViewAutoresizingNone;
+    [self.view addSubview:self.stage];
     [self buildBall];
     [self buildPanel];
     self.panelVisible = NO;
@@ -636,7 +644,7 @@ static const int kCGMResCount = 4;
     [self.ball addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragBall:)];
     [self.ball addGestureRecognizer:pan];
-    [self.view addSubview:self.ball];
+    [self.stage addSubview:self.ball];
 }
 
 - (UILabel *)makeLabel:(NSString *)text size:(CGFloat)size bold:(BOOL)bold color:(UIColor *)color {
@@ -733,24 +741,44 @@ static const int kCGMResCount = 4;
     self.logView.layer.cornerRadius = 6.0;
     [self.panel addSubview:self.logView];
 
-    [self.view addSubview:self.panel];
+    [self.stage addSubview:self.panel];
 }- (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     [self layoutChrome];
 }
 
+/* The app declares landscape only, but the game rotates its own artwork, so a
+   plain landscape overlay shows up sideways. `stage` is laid out in the game's
+   visual orientation and then rotated to sit on top of the real window. */
 - (CGRect)safeFrame {
-    CGRect b = self.view.bounds;
-    if (@available(iOS 11.0, *)) {
-        UIEdgeInsets in = self.view.safeAreaInsets;
-        b.origin.x += in.left; b.origin.y += in.top;
-        b.size.width -= (in.left + in.right);
-        b.size.height -= (in.top + in.bottom);
+    CGRect vb = self.view.bounds;
+    BOOL rotated = (gCfgRot == 90 || gCfgRot == 270 || gCfgRot == -90 || gCfgRot == -270);
+    CGRect b = rotated ? CGRectMake(0, 0, vb.size.height, vb.size.width) : vb;
+    UIEdgeInsets in = UIEdgeInsetsZero;
+    if (@available(iOS 11.0, *)) { in = self.view.safeAreaInsets; }
+    if (rotated) {
+        UIEdgeInsets sin = UIEdgeInsetsMake(in.left, in.bottom, in.right, in.top);
+        in = sin;
     }
+    b.origin.x += in.left; b.origin.y += in.top;
+    b.size.width -= (in.left + in.right);
+    b.size.height -= (in.top + in.bottom);
     return b;
 }
 
+- (void)layoutStage {
+    CGRect vb = self.view.bounds;
+    if (vb.size.width < 1 || vb.size.height < 1) { return; }
+    CGFloat angle = (CGFloat)gCfgRot * (CGFloat)M_PI / 180.0;
+    CGRect area = [self safeFrame];
+    self.stage.transform = CGAffineTransformIdentity;
+    self.stage.bounds = CGRectMake(0, 0, area.size.width, area.size.height);
+    self.stage.center = CGPointMake(CGRectGetMidX(vb), CGRectGetMidY(vb));
+    if (gCfgRot != 0) { self.stage.transform = CGAffineTransformMakeRotation(angle); }
+}
+
 - (void)layoutChrome {
+    [self layoutStage];
     CGRect safe = [self safeFrame];
     if (safe.size.width < 10 || safe.size.height < 10) { return; }
 
@@ -846,6 +874,8 @@ static const int kCGMResCount = 4;
     NSDictionary *d = @{
         @"panelVisible": @(self.panelVisible),
         @"view":  @{ @"w": @(vb.size.width),  @"h": @(vb.size.height) },
+        @"stage": @{ @"w": @(self.stage.bounds.size.width), @"h": @(self.stage.bounds.size.height) },
+        @"rot":   @(gCfgRot),
         @"window": @{ @"x": @(wf.origin.x), @"y": @(wf.origin.y),
                       @"w": @(wf.size.width), @"h": @(wf.size.height) },
         @"ball":  @{ @"x": @(self.ball.frame.origin.x), @"y": @(self.ball.frame.origin.y),
@@ -1108,8 +1138,6 @@ static void CGMTick(void) {
             }
             if (changed && reportBudget-- > 0) {
                 CGMLog(@"hook hits: %@", parts.count ? [parts componentsJoinedByString:@" "] : @"(none)");
-                [gVC appendLog:[NSString stringWithFormat:@"[hits] %@",
-                                parts.count ? [parts componentsJoinedByString:@" "] : @"(none)"]];
             }
             static int lastSig = -1;
             int sig = 0;
