@@ -52,6 +52,7 @@ fi
 
 cp "$BUILD/CookingGoMod.dylib" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.dylib"
 cp "$ROOT/packaging/CookingGoMod.plist" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.plist"
+cp "$ROOT/packaging/CookingGoMod.cfg" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.cfg"
 # control must end with a newline and use LF, or dpkg-deb refuses the package
 {
   printf '%s' "$(cat "$ROOT/packaging/control")"

@@ -15,7 +15,7 @@
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
 ;(function () {
-  var VERSION = "1.0.1";
+  var VERSION = "1.0.2";
   var TAG = "[CookingMod]";
 
   function log(s) {
