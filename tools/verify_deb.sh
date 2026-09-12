@@ -34,7 +34,7 @@ else
 fi
 
 echo "== required payload (data archive)"
-for want in var/jb/usr/lib/TweakInject/CookingGoMod.dylib var/jb/usr/lib/TweakInject/CookingGoMod.plist; do
+for want in var/jb/usr/lib/TweakInject/CookingGoMod.dylib var/jb/usr/lib/TweakInject/CookingGoMod.plist var/jb/usr/lib/TweakInject/CookingGoMod.cfg var/jb/usr/lib/TweakInject/CookingGoMod.bootstrap.js; do
   if dpkg-deb -c "$DEB" | awk '{print $6}' | sed 's|^\./||' | grep -qx "$want"; then
     echo "   ok $want"
   else
@@ -43,11 +43,14 @@ for want in var/jb/usr/lib/TweakInject/CookingGoMod.dylib var/jb/usr/lib/TweakIn
 done
 
 echo "== required payload (control archive)"
-if dpkg-deb --ctrl-tarfile "$DEB" | tar -t 2>/dev/null | grep -q './control'; then
-  echo "   ok ./control"
-else
-  echo "!! control archive missing ./control"; fail=1
-fi
+CTRL_LIST="$(dpkg-deb --ctrl-tarfile "$DEB" 2>/dev/null | tar -t 2>/dev/null || true)"
+for cfile in ./control ./postinst ./postrm; do
+  if printf '%s\n' "$CTRL_LIST" | grep -qx "$cfile"; then
+    echo "   ok $cfile"
+  else
+    echo "!! control archive missing $cfile"; fail=1
+  fi
+done
 
 if [[ $fail -ne 0 ]]; then echo "VERIFY FAILED"; exit 1; fi
 echo "VERIFY OK"

@@ -1,0 +1,22 @@
+#!/bin/sh
+# CookingGoMod - remove: restore the pristine game script.
+case "$1" in
+    remove|purge|upgrade|disappear) ;;
+    *) exit 0 ;;
+esac
+
+BAK_DIR=/var/mobile/Library/Caches/cookingmod
+APP_EXEC=AirplaneCooking-mobile.app
+
+for BUNDLE in /private/var/containers/Bundle/Application/*/"$APP_EXEC" \
+              /var/containers/Bundle/Application/*/"$APP_EXEC"; do
+    [ -d "$BUNDLE" ] || continue
+    SCRIPT="$BUNDLE/assets/scriptBundle/index.js"
+    BAK="$BAK_DIR/index.js.orig"
+    if [ -f "$SCRIPT" ] && [ -f "$BAK" ]; then
+        cat "$BAK" > "$SCRIPT" 2>/dev/null && echo "CookingGoMod: restored $SCRIPT"
+    fi
+done
+
+rm -rf "$BAK_DIR" 2>/dev/null
+exit 0

@@ -59,7 +59,10 @@ cp "$ROOT/packaging/CookingGoMod.cfg" "$PKG/var/jb/usr/lib/TweakInject/CookingGo
   printf '\n'
 } > "$PKG/DEBIAN/control"
 cp "$ROOT/packaging/postinst" "$PKG/DEBIAN/postinst"
-chmod 755 "$PKG/DEBIAN/postinst"
+cp "$ROOT/packaging/postrm" "$PKG/DEBIAN/postrm"
+cp "$ROOT/src/CGMBootstrap.js" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.bootstrap.js"
+chmod 755 "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/postrm"
+chmod 644 "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.bootstrap.js"
 chmod 644 "$PKG/DEBIAN/control" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.plist"
 chmod 755 "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.dylib"
 

@@ -1,7 +1,58 @@
 #!/bin/sh
-set -e
+# CookingGoMod - post-install.
+#
+# The game does not read assets/scriptBundle/index.js through any ObjC file API
+# (verified on device 2026-09-12 with hook-hit telemetry), and hooking the POSIX
+# open family kills the process, so the bootstrap is appended to the script on
+# disk here, as root, with a pristine copy kept for repeat installs / uninstall.
+
 INJ=/var/jb/usr/lib/TweakInject
-chmod 755 "$INJ/CookingGoMod.dylib" 2>/dev/null || true
-chmod 644 "$INJ/CookingGoMod.plist" 2>/dev/null || true
-echo "CookingGoMod installed. Respring or relaunch the game to inject."
+PAYLOAD="$INJ/CookingGoMod.bootstrap.js"
+BAK_DIR=/var/mobile/Library/Caches/cookingmod
+APP_EXEC=AirplaneCooking-mobile.app
+BID=com.airplanecooking.chef.kitchen.restaurant.diner
+
+chmod 755 "$INJ/CookingGoMod.dylib" 2>/dev/null
+chmod 644 "$INJ/CookingGoMod.plist" "$INJ/CookingGoMod.cfg" "$PAYLOAD" 2>/dev/null
+
+if [ ! -f "$PAYLOAD" ]; then
+    echo "CookingGoMod: bootstrap payload missing, skipping script patch"
+    exit 0
+fi
+
+mkdir -p "$BAK_DIR" 2>/dev/null
+
+patched=0
+for BUNDLE in /private/var/containers/Bundle/Application/*/"$APP_EXEC" \
+              /var/containers/Bundle/Application/*/"$APP_EXEC"; do
+    [ -d "$BUNDLE" ] || continue
+    if [ -f "$BUNDLE/Info.plist" ]; then
+        grep -qa "$BID" "$BUNDLE/Info.plist" 2>/dev/null || continue
+    fi
+    SCRIPT="$BUNDLE/assets/scriptBundle/index.js"
+    [ -f "$SCRIPT" ] || continue
+
+    BAK="$BAK_DIR/index.js.orig"
+    if [ ! -f "$BAK" ]; then
+        cp "$SCRIPT" "$BAK" 2>/dev/null || continue
+    fi
+
+    TMP="$BAK_DIR/index.js.new"
+    cat "$BAK" > "$TMP" 2>/dev/null || continue
+    printf '\n' >> "$TMP"
+    cat "$PAYLOAD" >> "$TMP" 2>/dev/null || continue
+    cat "$TMP" > "$SCRIPT" 2>/dev/null || { rm -f "$TMP"; continue; }
+    rm -f "$TMP"
+
+    chmod 644 "$SCRIPT" 2>/dev/null
+    echo "CookingGoMod: JS bootstrap injected into $SCRIPT"
+    patched=1
+done
+
+if [ "$patched" -eq 0 ]; then
+    echo "CookingGoMod: Cooking GO not installed yet - bootstrap will not be injected."
+    echo "CookingGoMod: install/update the game, then reinstall this package."
+fi
+
+echo "CookingGoMod installed. Relaunch the game to inject."
 exit 0
