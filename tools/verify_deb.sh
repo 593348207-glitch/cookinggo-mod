@@ -10,6 +10,9 @@ dpkg-deb -f "$DEB"
 ARCH="$(dpkg-deb -f "$DEB" Architecture)"
 [[ "$ARCH" == "iphoneos-arm64" ]] || { echo "!! bad Architecture: $ARCH"; fail=1; }
 
+PKGNAME="$(dpkg-deb -f "$DEB" Package)"
+[[ -n "$PKGNAME" ]] || { echo "!! control archive has no Package field"; fail=1; }
+
 echo "== top level entries"
 TOPS="$(dpkg-deb -c "$DEB" | awk '{print $6}' | sed 's|^\./||' | cut -d/ -f1 | sort -u | tr '\n' ' ')"
 echo "   $TOPS"
@@ -30,12 +33,21 @@ else
   echo "   clean"
 fi
 
-echo "== required payload"
-for want in var/jb/usr/lib/TweakInject/CookingGoMod.dylib var/jb/usr/lib/TweakInject/CookingGoMod.plist DEBIAN/control; do
-  if ! dpkg-deb -c "$DEB" | awk '{print $6}' | sed 's|^\./||' | grep -qx "$want"; then
+echo "== required payload (data archive)"
+for want in var/jb/usr/lib/TweakInject/CookingGoMod.dylib var/jb/usr/lib/TweakInject/CookingGoMod.plist; do
+  if dpkg-deb -c "$DEB" | awk '{print $6}' | sed 's|^\./||' | grep -qx "$want"; then
+    echo "   ok $want"
+  else
     echo "!! missing $want"; fail=1
   fi
 done
+
+echo "== required payload (control archive)"
+if dpkg-deb --ctrl-tarfile "$DEB" | tar -t 2>/dev/null | grep -q './control'; then
+  echo "   ok ./control"
+else
+  echo "!! control archive missing ./control"; fail=1
+fi
 
 if [[ $fail -ne 0 ]]; then echo "VERIFY FAILED"; exit 1; fi
 echo "VERIFY OK"
