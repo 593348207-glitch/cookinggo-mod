@@ -19,6 +19,7 @@ iOS 16.x / arm64 / Dopamine (rootless) tweak for **Cooking GO 1.25.03**.
 | 事件总线 | `__require("Core").default.Event` | `Core` 模块 `static get Event()` |
 | 事件常量 | `__require("AppConst").EVENT_ID.UPDATE_GEM / UPDATE_COIN / UPDATE_POWER / UPDATE_AD_COUPON / UPDATE_PROP_NUM` | `AppConst` 模块 `i.EVENT_ID = {...}` |
 | 免广告券 | prop id **57**（`EPropID.AdCoupon`），走 `setPropNum(57, n)` | `ServerConst` 枚举 + `PlayerDataMgr.setPropNum` |
+| 文件读取路径 | `cocos2d::FileUtilsApple` → `[NSData dataWithContentsOfFile:]` | 二进制含 `N7cocos2d14FileUtilsAppleE`、`ResizableBuffer`、`getContents` |
 
 > 本工程**不使用**任何 IL2CPP 方案（`il2cpp_class_from_name` / `FieldInfo` / 类偏移）。JS 对象没有固定内存布局。
 
