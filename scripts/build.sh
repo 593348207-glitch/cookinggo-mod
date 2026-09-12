@@ -68,4 +68,4 @@ find "$PKG" \( -name '.DS_Store' -o -name '._*' -o -name '__MACOSX' -o -name '*.
 dpkg-deb --root-owner-group -Zgzip -b "$PKG" "$DEB"
 echo "== built $DEB"
 
-"$ROOT/tools/verify_deb.sh" "$DEB"
+bash "$ROOT/tools/verify_deb.sh" "$DEB"
