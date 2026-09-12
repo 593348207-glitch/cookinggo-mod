@@ -52,7 +52,11 @@ fi
 
 cp "$BUILD/CookingGoMod.dylib" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.dylib"
 cp "$ROOT/packaging/CookingGoMod.plist" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.plist"
-cp "$ROOT/packaging/control" "$PKG/DEBIAN/control"
+# control must end with a newline and use LF, or dpkg-deb refuses the package
+{
+  printf '%s' "$(cat "$ROOT/packaging/control")"
+  printf '\n'
+} > "$PKG/DEBIAN/control"
 cp "$ROOT/packaging/postinst" "$PKG/DEBIAN/postinst"
 chmod 755 "$PKG/DEBIAN/postinst"
 chmod 644 "$PKG/DEBIAN/control" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.plist"
