@@ -61,7 +61,7 @@ static void CGMFileAppend(NSString *line) {
     if (!fh) { return; }
     @try {
         [fh seekToEndOfFile];
-        [fh writeData:[(line @"\n") dataUsingEncoding:NSUTF8StringEncoding]];
+        [fh writeData:[[line stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding]];
     } @catch (NSException *e) {
     } @finally {
         [fh closeFile];
@@ -221,7 +221,7 @@ static id CGMInitWithContentsOfFile(id self, SEL _cmd, NSString *path) {
     id d = gOrigInitWithContentsOfFile ? gOrigInitWithContentsOfFile(self, _cmd, path) : nil;
     if (CGMIsTargetPath(path) && [d isKindOfClass:[NSData class]]) {
         NSData *inj = CGMInjectedData(d, path);
-        if (inj != d) { return inj; }
+        if (inj != d) { return (__bridge id)CFBridgingRetain(inj); }
     }
     return d;
 }
@@ -443,6 +443,8 @@ static const int kCGMResCount = 4;
 @property (nonatomic, assign) CGPoint panelCenter;
 @property (nonatomic, assign) CGFloat keyboardShift;
 @property (nonatomic, assign) BOOL didInitPositions;
+- (void)appendLog:(NSString *)line;
+- (void)refreshStatus;
 @end
 
 @implementation CGMViewController
@@ -877,7 +879,7 @@ static void CGMTick(void) {
                                 probe[@"typeofRequire"] ?: @"?", probe[@"typeofJsb"] ?: @"?", probe[@"typeofCc"] ?: @"?"]];
                 if (probe[@"gameDefault"]) {
                     [gVC appendLog:[NSString stringWithFormat:@"[自检] Game.default=%@ managers=%@",
-                                    probe[@"gameDefault"], probe[@"managers"] ? @( [probe[@"managers"] count] ) : @"?"]];
+                                    probe[@"gameDefault"], ([probe[@"managers"] isKindOfClass:[NSArray class]] ? [NSString stringWithFormat:@"%lu", (unsigned long)[probe[@"managers"] count]] : @"?")]];
                 }
                 if (probe[@"eventIdCount"]) {
                     [gVC appendLog:[NSString stringWithFormat:@"[自检] EVENT_ID=%@ coreEvent=%@ playerInfo字段=%@",

@@ -33,7 +33,7 @@ xcrun --sdk iphoneos clang \
   -dynamiclib \
   -isysroot "$SDK" \
   -I"$ROOT/src" \
-  -DCGM_VERSION="\"$VERSION\"" \
+  -DCGM_VERSION=@"\"$VERSION\"" \
   -framework Foundation -framework UIKit -framework QuartzCore -framework CoreGraphics \
   -Wl,-undefined,dynamic_lookup \
   -Wl,-install_name,/var/jb/usr/lib/TweakInject/CookingGoMod.dylib \
