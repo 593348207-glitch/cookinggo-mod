@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+INJ=/var/jb/usr/lib/TweakInject
+chmod 755 "$INJ/CookingGoMod.dylib" 2>/dev/null || true
+chmod 644 "$INJ/CookingGoMod.plist" 2>/dev/null || true
+echo "CookingGoMod installed. Respring or relaunch the game to inject."
+exit 0

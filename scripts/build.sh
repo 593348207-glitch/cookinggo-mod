@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Build the rootless DEB for Cooking GO 1.25.03 (must run on macOS with Xcode).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="$(awk '/^Version:/ {print $2}' "$ROOT/packaging/control")"
+PKGID="$(awk '/^Package:/ {print $2}' "$ROOT/packaging/control")"
+ARCH="$(awk '/^Architecture:/ {print $2}' "$ROOT/packaging/control")"
+[[ -z "$VERSION" || -z "$PKGID" ]] && { echo "control file incomplete"; exit 1; }
+
+BUILD="$ROOT/build"
+PKG="$BUILD/pkg"
+OUT="$ROOT/outputs"
+DEB="$OUT/${PKGID}_${VERSION}_${ARCH}.deb"
+
+echo "== version $VERSION / package $PKGID / arch $ARCH"
+
+python3 "$ROOT/tools/embed_js.py"
+
+SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+echo "== iOS SDK $SDK"
+
+rm -rf "$BUILD"
+mkdir -p "$PKG/DEBIAN" "$PKG/var/jb/usr/lib/TweakInject" "$OUT"
+
+# Compile the tweak (arm64, rootless install name, no substrate link dependency).
+xcrun --sdk iphoneos clang \
+  -arch arm64 \
+  -miphoneos-version-min=14.0 \
+  -fobjc-arc \
+  -fmodules \
+  -O2 \
+  -dynamiclib \
+  -isysroot "$SDK" \
+  -I"$ROOT/src" \
+  -DCGM_VERSION="\"$VERSION\"" \
+  -framework Foundation -framework UIKit -framework QuartzCore -framework CoreGraphics \
+  -Wl,-undefined,dynamic_lookup \
+  -Wl,-install_name,/var/jb/usr/lib/TweakInject/CookingGoMod.dylib \
+  "$ROOT/src/CookingGoMod.m" \
+  -o "$BUILD/CookingGoMod.dylib"
+
+file "$BUILD/CookingGoMod.dylib"
+
+# Sign so the dylib loads cleanly under ElleKit.
+if command -v ldid >/dev/null 2>&1; then
+  ldid -S "$BUILD/CookingGoMod.dylib"
+  echo "== signed with ldid"
+else
+  echo "!! ldid not found (dylib left unsigned)"
+fi
+
+cp "$BUILD/CookingGoMod.dylib" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.dylib"
+cp "$ROOT/packaging/CookingGoMod.plist" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.plist"
+cp "$ROOT/packaging/control" "$PKG/DEBIAN/control"
+cp "$ROOT/packaging/postinst" "$PKG/DEBIAN/postinst"
+chmod 755 "$PKG/DEBIAN/postinst"
+chmod 644 "$PKG/DEBIAN/control" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.plist"
+chmod 755 "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.dylib"
+
+# Strip anything that would break install on a read-only root filesystem.
+find "$PKG" \( -name '.DS_Store' -o -name '._*' -o -name '__MACOSX' -o -name '*.dSYM' \) -exec rm -rf {} + 2>/dev/null || true
+
+dpkg-deb --root-owner-group -Zgzip -b "$PKG" "$DEB"
+echo "== built $DEB"
+
+"$ROOT/tools/verify_deb.sh" "$DEB"

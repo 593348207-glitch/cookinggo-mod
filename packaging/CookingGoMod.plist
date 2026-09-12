@@ -1,0 +1,5 @@
+{
+    Filter = {
+        Bundles = ( "com.airplanecooking.chef.kitchen.restaurant.diner" );
+    };
+}

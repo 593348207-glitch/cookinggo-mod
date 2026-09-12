@@ -1,0 +1,50 @@
+name: Build rootless DEB
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain check
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          brew install ldid dpkg || true
+          which ldid dpkg-deb || true
+
+      - name: Build DEB
+        run: bash scripts/build.sh
+
+      - name: Package report
+        run: |
+          ls -l outputs
+          dpkg-deb -f outputs/*.deb
+          dpkg-deb -c outputs/*.deb
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cookinggo-mod-deb
+          path: outputs/*.deb
+          if-no-files-found: error
+
+      - name: Read version
+        id: ver
+        run: echo "version=$(awk '/^Version:/ {print $2}' packaging/control)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: CookingGo Mod v${{ steps.ver.outputs.version }}
+          files: outputs/*.deb
+          generate_release_notes: true

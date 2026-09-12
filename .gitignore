@@ -1,0 +1,6 @@
+build/
+outputs/
+dist/
+*.o
+*.dylib
+.DS_Store

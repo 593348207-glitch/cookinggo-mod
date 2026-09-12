@@ -1,0 +1,11 @@
+Package: com.seagull.cookinggomod
+Name: CookingGo Mod
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: Cooking GO 1.25.03 资源修改（钻石/金币/燃油/免广告券），悬浮窗可拖动，支持 + 与 = 两种写入，并输出修改前/输入表达/修改后日志。
+Maintainer: seagull
+Author: seagull
+Section: Tweaks
+Depends: ellekit | mobilesubstrate | firmware (>= 13.0)
+Tag: purpose::extension, compatible_min::ios13.0
+Installed-Size: 256
