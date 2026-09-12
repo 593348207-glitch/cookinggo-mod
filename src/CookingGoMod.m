@@ -91,6 +91,7 @@ static void CGMLog(NSString *fmt, ...) {
 static int gCfgObjc    = 1;   /* ObjC file-API hooks: the JS injection path      */
 static int gCfgPosix   = 0;   /* POSIX open-family hooks: invasive, opt-in       */
 static int gCfgOverlay = 1;   /* floating panel UI                               */
+static int gCfgPanelOpen = 0; /* open the panel at launch (layout diagnostics)   */
 
 static void CGMApplyConfigLine(const char *line) {
     if (!line) { return; }
@@ -108,6 +109,7 @@ static void CGMApplyConfigLine(const char *line) {
     if (strcmp(key, "objc") == 0) { gCfgObjc = val; }
     else if (strcmp(key, "posix") == 0) { gCfgPosix = val; }
     else if (strcmp(key, "overlay") == 0) { gCfgOverlay = val; }
+    else if (strcmp(key, "panel") == 0) { gCfgPanelOpen = val; }
 }
 
 static void CGMReadConfigFile(const char *path) {
@@ -127,7 +129,7 @@ static void CGMReadConfig(void) {
         NSString *p = [home stringByAppendingPathComponent:@"Documents/cookingmod/cfg.txt"];
         CGMReadConfigFile(p.fileSystemRepresentation);
     }
-    CGMLog(@"config: objc=%d posix=%d overlay=%d", gCfgObjc, gCfgPosix, gCfgOverlay);
+    CGMLog(@"config: objc=%d posix=%d overlay=%d panel=%d", gCfgObjc, gCfgPosix, gCfgOverlay, gCfgPanelOpen);
 }
 
 /* ============================== write helpers ============================= */
@@ -590,6 +592,8 @@ static const int kCGMResCount = 4;
 @property (nonatomic, assign) CGFloat keyboardShift;
 @property (nonatomic, assign) BOOL didInitPositions;
 - (void)appendLog:(NSString *)line;
+- (void)setPanelVisible:(BOOL)visible;
+- (void)writeUIState;
 - (void)refreshStatus;
 @end
 
@@ -793,6 +797,7 @@ static const int kCGMResCount = 4;
     CGFloat logH = panelH - y - pad;
     if (logH < 60.0) { logH = 60.0; }
     self.logView.frame = CGRectMake(pad, y, panelW - 2.0 * pad, logH);
+    [self writeUIState];
 }
 
 - (void)refreshStatus {
@@ -817,9 +822,38 @@ static const int kCGMResCount = 4;
 - (void)dismissKeyboard { [self.input resignFirstResponder]; }
 
 - (void)togglePanel {
-    self.panelVisible = !self.panelVisible;
-    self.panel.hidden = !self.panelVisible;
-    if (self.panelVisible) { [self refreshStatus]; } else { [self dismissKeyboard]; }
+    [self setPanelVisible:!self.panelVisible];
+}
+
+- (void)setPanelVisible:(BOOL)visible {
+    self.panelVisible = visible;
+    self.panel.hidden = !visible;
+    CGMLog(@"panel %@ (view=%.0fx%.0f window=%.0fx%.0f ball=%.0f,%.0f)",
+           visible ? @"OPENED" : @"closed", self.view.bounds.size.width, self.view.bounds.size.height,
+           self.view.window.bounds.size.width, self.view.window.bounds.size.height,
+           self.ball.center.x, self.ball.center.y);
+    [self writeUIState];
+    if (visible) { [self refreshStatus]; } else { [self dismissKeyboard]; }
+}
+
+- (void)writeUIState {
+    if (!gMailboxPath) { return; }
+    CGRect vb = self.view.bounds;
+    CGRect wf = self.view.window ? self.view.window.frame : CGRectZero;
+    NSDictionary *d = @{
+        @"panelVisible": @(self.panelVisible),
+        @"view":  @{ @"w": @(vb.size.width),  @"h": @(vb.size.height) },
+        @"window": @{ @"x": @(wf.origin.x), @"y": @(wf.origin.y),
+                      @"w": @(wf.size.width), @"h": @(wf.size.height) },
+        @"ball":  @{ @"x": @(self.ball.frame.origin.x), @"y": @(self.ball.frame.origin.y),
+                     @"w": @(self.ball.frame.size.width), @"h": @(self.ball.frame.size.height) },
+        @"panel": @{ @"x": @(self.panel.frame.origin.x), @"y": @(self.panel.frame.origin.y),
+                     @"w": @(self.panel.frame.size.width), @"h": @(self.panel.frame.size.height) },
+        @"input": @{ @"x": @(self.input.frame.origin.x), @"y": @(self.input.frame.origin.y),
+                     @"w": @(self.input.frame.size.width), @"h": @(self.input.frame.size.height) },
+        @"ts": @((long long)[[NSDate date] timeIntervalSince1970])
+    };
+    CGMWriteJSON(d, [gMailboxPath stringByAppendingPathComponent:@"ui_state.json"]);
 }
 
 - (void)dragBall:(UIPanGestureRecognizer *)g {
@@ -1037,6 +1071,22 @@ static void CGMTick(void) {
             }
         }
 
+        NSDictionary *uiCmd = CGMReadJSON([gChosenMailbox stringByAppendingPathComponent:@"ui_cmd.json"]);
+        if (uiCmd) {
+            static NSInteger lastUiSeq = -1;
+            NSInteger useq = [uiCmd[@"seq"] integerValue];
+            if (useq != lastUiSeq) {
+                lastUiSeq = useq;
+                if (uiCmd[@"panel"] != nil) {
+                    BOOL want = [uiCmd[@"panel"] boolValue];
+                    if (gVC.panelVisible != want) { [gVC setPanelVisible:want]; }
+                }
+                if ([uiCmd[@"log"] isKindOfClass:[NSString class]]) {
+                    [gVC appendLog:uiCmd[@"log"]];
+                }
+            }
+        }
+
         if (hello && !gEngineReady) {
             [gVC appendLog:[NSString stringWithFormat:@"[JS] bootstrap v%@ 已注入，等待引擎 init",
                             hello[@"version"] ?: @"?"]];
@@ -1112,6 +1162,7 @@ static void CGMOnLaunchDone(void) {
                    dispatch_get_main_queue(), ^{
         CGMSetupWindow();
         CGMStartTick();
+        if (gCfgPanelOpen && gVC) { [gVC setPanelVisible:YES]; }
     });
 }
 
