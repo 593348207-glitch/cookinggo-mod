@@ -87,6 +87,41 @@ main executable: TeamIdentifier=not set
 AdjustSdk.framework: TeamIdentifier=KT32KPGAK9
 ```
 
+## One-click post-fix verification
+
+After installing or preparing a fixed/resigned base IPA, use:
+
+```powershell
+python F:\测试\cookingGO\github-cookinggo-mod\tools\postfix_verify_12602.py `
+  --mcp F:\测试\cookingGO\mcp.py `
+  --install-ipa "F:\测试\cookingGO\dist\CookingGo_1.26.02.resigned.ipa" `
+  --install-deb "F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.2_iphoneos-arm64.deb" `
+  --enable-rt `
+  --out F:\测试\cookingGO\_work\postfix_verify_after_resign.json
+```
+
+Conservative behavior:
+
+- if the base launch still has `Library Validation failed` or `dyld(6) code:1`, the script stops and skips DEB install / `rt=1`;
+- it verifies default `rt=0` first;
+- `--enable-rt` is required before the script writes `rt=1`;
+- full logs go into the JSON report, while the console prints gate summaries.
+
+Base-only current-state check:
+
+```powershell
+python F:\测试\cookingGO\github-cookinggo-mod\tools\postfix_verify_12602.py `
+  --mcp F:\测试\cookingGO\mcp.py `
+  --out F:\测试\cookingGO\_work\postfix_verify_base_current.json
+```
+
+Current broken package correctly reports:
+
+```text
+base_gate: {'ok': False, 'message': 'base launch failed dyld/library-validation gate'}
+final: STOP: base game launch gate failed; DEB install/rt enable skipped
+```
+
 ## Post-fix verification order
 
 1. Install the clean/resigned IPA.
@@ -94,8 +129,9 @@ AdjustSdk.framework: TeamIdentifier=KT32KPGAK9
 3. Run `device_launch_triage.py`; require no `Library Validation failed` and no `dyld(6) code:1`.
 4. Confirm live `index.jsc` SHA if still using the supported static payload path.
 5. Install `com.seagull.cookinggomod_1.3.2_iphoneos-arm64.deb`.
-6. Validate overlay/state files.
-7. Only then continue with runtime injection work for 1.26.02 encrypted JSC.
+6. Validate default `rt=0` cfg and overlay/state files.
+7. Flip `rt=1` only after `rt=0` passes, then check `runtime evalString hook installed` and JS handshake files.
+8. Only then continue with runtime injection tuning for 1.26.02 encrypted JSC.
 
 ## Do not do this while base game is broken
 

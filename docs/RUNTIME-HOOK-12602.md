@@ -236,6 +236,18 @@ python F:\测试\cookingGO\github-cookinggo-mod\tools\static_verify_12602.py `
 
 For v1.3.2+ this asserts `rt=0` remains default-off and that source, dylib marker, and documented `0x1c28a48` coordinate agree.
 
+Post-fix device verifier:
+
+```powershell
+python F:\测试\cookingGO\github-cookinggo-mod\tools\postfix_verify_12602.py `
+  --mcp F:\测试\cookingGO\mcp.py `
+  --install-deb "F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.2_iphoneos-arm64.deb" `
+  --enable-rt `
+  --out F:\测试\cookingGO\_work\postfix_verify_after_resign.json
+```
+
+The script refuses to continue into DEB/`rt=1` testing while the base game still fails the dyld/library-validation gate.
+
 ## Verification target after implementation
 
 Inside the app container:
