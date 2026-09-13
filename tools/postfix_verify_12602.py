@@ -183,8 +183,15 @@ def mailbox_path(app_info: dict[str, Any]) -> str:
 
 
 def package_installed(mcp: Any, package_id: str) -> bool:
-    r = run_cmd(mcp, f"dpkg -s {sh_quote(package_id)} >/dev/null 2>&1 && echo installed || true", 10)
-    return "installed" in r.get("output", "")
+    # `dpkg -s` also exits 0 for a package left in `deinstall ok config-files`
+    # state. Require the exact installed status so a removed tweak does not
+    # trigger the rt=0 gate merely because dpkg retained its config files.
+    r = run_cmd(
+        mcp,
+        f"dpkg-query -W -f='${{Status}}\n' {sh_quote(package_id)} 2>/dev/null || true",
+        10,
+    )
+    return bool(re.search(r"(?m)^install ok installed\s*$", str(r.get("output", ""))))
 
 
 def collect_tweak_state(mcp: Any, app_info: dict[str, Any], cfg_path: str) -> dict[str, Any]:
