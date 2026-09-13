@@ -1,6 +1,6 @@
 # CookingGo Mod — Cooking GO 1.25.03/1.26.02
 
-iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.0**
+iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.1**
 
 * Install: `/var/jb/usr/lib/TweakInject/CookingGoMod.dylib` (+ `.plist`, `.cfg`, `.bootstrap.js`)
 * Bundle filter: `com.airplanecooking.chef.kitchen.restaurant.diner`
@@ -122,7 +122,7 @@ dpkg -i com.seagull.cookinggomod_<ver>_iphoneos-arm64.deb   # as root
 dpkg -r com.seagull.cookinggomod                            # restores index.js
 ```
 
-## 1.3.0 月卡/IAP Hook + 1.26.02 encrypted JSC
+## 1.3.1 月卡/IAP Hook + 1.26.02 encrypted JSC
 
 - 新增独立运行期开关：面板按钮 `内购:关/开`，状态持久化到 `<container>/Documents/cookingmod/iap_hook.json`。
 - 新增按钮 `免费月卡`：直接触发已定位的月卡发放链路 `Manager.VipCard.setPlayerVipDataByGiftId(...)`，随后 `saveVipCardData(false)` 并刷新相关 UI event。
@@ -133,3 +133,12 @@ dpkg -r com.seagull.cookinggomod                            # restores index.js
 验证文件：`state.json` 会增加 `iapHook`、`iapHookInstalledPay`、`iapHookInstalledIOS`、`vip` 字段；`probe.json` 会增加 `hasPay`、`hasYiFaniOS`、`vip`。
 
 - 1.26.02 support: `postinst` now restores/copies a prebuilt encrypted `assets/scriptBundle/index.jsc` payload when the original JSC SHA-256 matches the supported release.
+
+
+## 1.3.1 静态闭环验证
+
+- 新 IPA SHA-256：`8fd0e3a5259f8561773fb6a60db5aaf21c57ab44df1487b9981018f865057710`。
+- `1.26.02` 的 `scriptBundle/config.json` 为 `encrypted:true`，运行时脚本是 `index.jsc`；不再尝试把 JS 文本追加到 `index.jsc`。
+- 工具 `tools/patch_cocos_jsc.py` 完成 XXTEA → gzip 解包、追加 bootstrap、gzip → XXTEA 回封，并执行 round-trip self-check。
+- 静态包验收：`dpkg-deb -f`、`dpkg-deb -c`、`tools/verify_deb.sh` 均通过；目标 DEB SHA-256：`56AA5B0AEF7C0F587E9BACD520F08A363BA5C7E01071E2F4284314E6205F44E8`。
+- 设备侧已确认原始 `index.jsc` SHA-256 为 `cb1825d4c535f77de8cafbec1d4b73e65d10f43835d04cb091c856b4967269d0`；旧版路径未被错误修改。

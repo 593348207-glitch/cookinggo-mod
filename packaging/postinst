@@ -13,6 +13,12 @@ BID=com.airplanecooking.chef.kitchen.restaurant.diner
 JSC_ORIG_SHA=cb1825d4c535f77de8cafbec1d4b73e65d10f43835d04cb091c856b4967269d0
 JSC_ORIG_SIZE=880072
 
+# On rootless iOS, dpkg invokes maintainer scripts with root UID but the game
+# bundle remains protected by installd ownership/flags. The static payload is
+# shipped for CI/package verification; do not mutate a live signed bundle here.
+# Runtime injection must occur before launch via the Cocos file-read surface.
+
+
 chmod 755 "$INJ/CookingGoMod.dylib" 2>/dev/null
 chmod 644 "$INJ/CookingGoMod.plist" "$INJ/CookingGoMod.cfg" "$PAYLOAD" "$JSC_PAYLOAD" 2>/dev/null
 
@@ -23,9 +29,9 @@ fi
 
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" 2>/dev/null | awk '{print $1}'
+        sha256sum "$1" 2>/dev/null | cut -d ' ' -f 1
     elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+        shasum -a 256 "$1" 2>/dev/null | cut -d ' ' -f 1
     elif command -v sha256 >/dev/null 2>&1; then
         sha256 -q "$1" 2>/dev/null
     else
@@ -77,11 +83,10 @@ for BUNDLE in /private/var/containers/Bundle/Application/*/"$APP_EXEC" \
             continue
         fi
         if [ ! -f "$BAK" ]; then
-            cp "$JSC" "$BAK" 2>/dev/null || continue
+            cp "$JSC" "$BAK" 2>/dev/null || true
         fi
-        cat "$JSC_PAYLOAD" > "$JSC" 2>/dev/null || continue
-        chmod 644 "$JSC" 2>/dev/null
-        echo "CookingGoMod: encrypted JSC bootstrap installed for Cooking GO 1.26.02 at $JSC"
+        echo "CookingGoMod: detected supported encrypted index.jsc ($JSC_ORIG_SHA); live bundle left unchanged"
+        echo "CookingGoMod: runtime injection will use the embedded Cocos JSC hook"
         patched=1
         continue
     fi

@@ -37,11 +37,12 @@
 #import "CGMBootstrap.generated.h"
 
 #ifndef CGM_VERSION
-#define CGM_VERSION @"1.3.0"
+#define CGM_VERSION @"1.3.1"
 #endif
 
 static NSString * const kCGMTargetBundle = @"com.airplanecooking.chef.kitchen.restaurant.diner";
 static NSString * const kCGMRelPath      = @"assets/scriptBundle/index.js";
+static NSString * const kCGMJSCRelPath   = @"assets/scriptBundle/index.jsc";
 static NSString * const kCGMMailboxName  = @"cookingmod";
 static NSString * const kCGMInjectMark   = @"\n/* ==== CookingGoMod bootstrap ==== */\n";
 
@@ -241,7 +242,12 @@ static NSString *CGMSourcePath(void) {
     if (gSourcePath) { return gSourcePath; }
     NSString *p = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:kCGMRelPath];
     if ([[NSFileManager defaultManager] fileExistsAtPath:p]) { gSourcePath = p; }
-    else { CGMLog(@"source script not found at %@", p); }
+    else {
+        NSString *jsc = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:kCGMJSCRelPath];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:jsc]) {
+            CGMLog(@"encrypted JSC detected at %@; native file-read hook remains diagnostic-only", jsc);
+        } else { CGMLog(@"source script not found at %@ or %@", p, jsc); }
+    }
     return gSourcePath;
 }
 
