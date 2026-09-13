@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const repoRoot = path.resolve(__dirname, '..');
 const bootstrapPath = path.join(repoRoot, 'src', 'CGMBootstrap.js');
 const source = fs.readFileSync(bootstrapPath, 'utf8');
+const expectedVersion = (source.match(/var VERSION = \"([^\"]+)\";/) || [null, 'unknown'])[1];
 
 function json(v) { return JSON.stringify(v); }
 function parseMaybe(s) { return s ? JSON.parse(s) : null; }
@@ -165,7 +166,7 @@ test('discovers first mailbox, writes hello/probe/state, and keeps IAP disabled 
   const hello = readJsonFile(h, 'js_hello.json');
   const state = readJsonFile(h, 'state.json');
   const probe = readJsonFile(h, 'probe.json');
-  assert.equal(hello.version, '1.3.4');
+  assert.equal(hello.version, expectedVersion);
   assert.equal(h.context.window.__cookingMod.dir, h.dir);
   assert.equal(state.ready, true);
   assert.equal(state.iapHook, 0);
