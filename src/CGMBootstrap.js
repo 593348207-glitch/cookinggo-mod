@@ -14,7 +14,7 @@
  *                  setPropNum(propId, num)   (EPropID.AdCoupon === 57)
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
-;(function () {
+;(function cookingModBootstrapEntry() {
   var VERSION = "1.3.4";
   var TAG = "[CookingMod]";
 
@@ -23,6 +23,25 @@
   }
   function str(e) {
     try { return String(e && e.message ? e.message : e); } catch (x) { return "unknown-error"; }
+  }
+
+  function retryBoot(reason) {
+    try {
+      window.__cookingModBootTries = (window.__cookingModBootTries || 0) + 1;
+      if (window.__cookingModBootTries > 80) {
+        log("bootstrap deferred limit reached: " + reason);
+        return;
+      }
+      if (window.__cookingModBootPending) { return; }
+      window.__cookingModBootPending = true;
+      log("bootstrap deferred: " + reason + " try=" + window.__cookingModBootTries);
+      setTimeout(function () {
+        try { window.__cookingModBootPending = false; } catch (e) {}
+        cookingModBootstrapEntry();
+      }, 250);
+    } catch (e) {
+      log("bootstrap retry unavailable: " + str(e));
+    }
   }
 
   try {
@@ -34,7 +53,7 @@
 
   var fs = null;
   try { fs = (window.jsb && window.jsb.fileUtils) ? window.jsb.fileUtils : null; } catch (e) { fs = null; }
-  if (!fs) { log("jsb.fileUtils unavailable -> abort"); return; }
+  if (!fs) { retryBoot("jsb.fileUtils unavailable"); return; }
 
   function readFile(p) {
     try { var s = fs.getStringFromFile(p); return (typeof s === "string") ? s : ""; } catch (e) { return ""; }
@@ -68,9 +87,11 @@
   }
   if (!DIR) {
     log("mailbox not found, candidates=" + JSON.stringify(cands));
+    retryBoot("mailbox not found");
     return;
   }
   log("mailbox=" + DIR + " writable=" + writable);
+  try { window.__cookingModBootPending = false; } catch (e) {}
 
   function now() { return (new Date()).getTime(); }
   writeJson(DIR + "js_hello.json", { version: VERSION, dir: DIR, writable: writable, ts: now() });

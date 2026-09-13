@@ -1,6 +1,6 @@
 # CookingGo Mod — Cooking GO 1.25.03/1.26.02
 
-iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.4**
+iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.5**
 
 * Install: `/var/jb/usr/lib/TweakInject/CookingGoMod.dylib` (+ `.plist`, `.cfg`, `.bootstrap.js`)
 * Bundle filter: `com.airplanecooking.chef.kitchen.restaurant.diner`
@@ -162,6 +162,24 @@ Full notes: `docs/CRASH-TRIAGE-12602.md`, `docs/SIGNING-FIX-12602.md`, and `docs
 
 Verdict: the immediate crash root is signing/library-validation/dyld loading state of the installed 1.26.02 app bundle. The mod DEB static closure is clean; do not write the live `index.jsc` while this dyld issue is unresolved.
 
+
+## 1.3.5 runtime bootstrap retry fix
+
+- `src/CGMBootstrap.js` now names the bootstrap entry function and defers/retries when runtime injection fires before `jsb.fileUtils` or a writable mailbox is available. This addresses the observed device state where native `evalString` returned OK but no `js_hello.json` / `state.json` / `probe.json` was written.
+- `tools/mock_cgm_bootstrap.js` now validates the early-no-`fileUtils` retry path and recovery once JSB becomes available.
+- `tools/static_verify_12602.py` now requires `src/CGMBootstrap.generated.h` and the packaged dylib to contain the retry marker, preventing Windows-only payload repacks from being mistaken for a rebuilt runtime-hook dylib.
+
+## 1.3.4 local static IAP/Riches evidence and bootstrap harness
+
+- Added static report `docs/IAP-RICHES-STATIC-12602.md` for the Table loading chain, `EGiftType` values, `Pay.pay -> paySuc -> OnSuccess` dispatch model, the 50 static `Pay.pay` callsites, and the Riches calendar thresholds/reward/persistence chain.
+- Added local Node.js harness `tools/mock_cgm_bootstrap.js` for `src/CGMBootstrap.js`; it uses `node:vm` and mocked JSB/Cocos objects, does not require or touch a device, and validates mailbox discovery, bind diagnostics, state/res/probe writes, seq de-duplication, error containment, and default-off IAP behavior.
+- Harness command:
+
+```powershell
+node F:\测试\cookingGO\github-cookinggo-mod\tools\mock_cgm_bootstrap.js
+```
+
+Expected result: `11/11 tests passed`.
 
 ## 1.3.4 runtime JS receipt update
 

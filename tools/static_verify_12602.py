@@ -117,6 +117,20 @@ def main() -> int:
     assert marker in patched_plain
     bootstrap = (repo / "src" / "CGMBootstrap.js").read_bytes()
     assert bootstrap in patched_plain
+    bootstrap_text = bootstrap.decode("utf-8", "replace")
+    assert "var gIap = { enabled: false" in bootstrap_text, "IAP state must default to disabled in JS bootstrap"
+    assert "loadIapState();" in bootstrap_text, "JS bootstrap must load persisted IAP state explicitly"
+    assert "function retryBoot(reason)" in bootstrap_text, "JS bootstrap must retry if injected before JSB/mailbox readiness"
+    generated_h = (repo / "src" / "CGMBootstrap.generated.h").read_text(encoding="utf-8")
+    assert "bootstrap deferred limit reached" in generated_h, "generated bootstrap header must include retry payload"
+    harness = repo / "tools" / "mock_cgm_bootstrap.js"
+    harness_text = harness.read_text(encoding="utf-8")
+    assert "default-off Pay wrapper passes purchase calls to original implementation" in harness_text
+    assert "purchase-success synthesis path" in harness_text
+    static_doc = repo / "docs" / "IAP-RICHES-STATIC-12602.md"
+    static_doc_text = static_doc.read_text(encoding="utf-8")
+    assert "Pay success dispatch model" in static_doc_text
+    assert "Riches / 财富日历 chain" in static_doc_text
     # Ensure the static payload is not the untouched original and is self-consistent.
     assert patched_jsc != jsc
     # Read the Debian ar container without depending on dpkg-deb/ar being on PATH.
@@ -131,7 +145,12 @@ def main() -> int:
     deb_version = control_field(ctrl_files["control"], "Version")
     cfg_path = "var/jb/usr/lib/TweakInject/CookingGoMod.cfg"
     dylib_path = "var/jb/usr/lib/TweakInject/CookingGoMod.dylib"
+    bootstrap_pkg_path = "var/jb/usr/lib/TweakInject/CookingGoMod.bootstrap.js"
+    jsc_pkg_path = "var/jb/usr/lib/TweakInject/CookingGoMod.index12602.jsc"
     assert cfg_path in data_files and dylib_path in data_files
+    assert bootstrap_pkg_path in data_files and jsc_pkg_path in data_files
+    assert data_files[bootstrap_pkg_path] == bootstrap, "DEB bootstrap payload differs from src/CGMBootstrap.js"
+    assert data_files[jsc_pkg_path] == patched_jsc, "DEB packaged index12602 JSC differs from packaging/CookingGoMod.index12602.jsc"
     cfg_text = data_files[cfg_path].decode("utf-8", "replace")
     if version_tuple(deb_version) >= (1, 3, 2):
         src_m = (repo / "src" / "CookingGoMod.m").read_text(encoding="utf-8")
@@ -142,6 +161,7 @@ def main() -> int:
         assert "CGMInstallRuntimeEvalHook" in src_m
         assert "runtime evalString hook disabled by config" in src_m
         assert b"runtime evalString hook installed" in data_files[dylib_path]
+        assert b"bootstrap deferred limit reached" in data_files[dylib_path], "packaged dylib must be rebuilt after JS retry changes"
         assert "candidate_evalString_function_va = 0x101c28a30" in runtime_doc
         assert "target = main_mach_header + 0x1c28a30" in runtime_doc
         assert "getInstance = main_mach_header + 0x1c263cc" in runtime_doc
@@ -150,8 +170,11 @@ def main() -> int:
     print("original plain JS bytes:", len(plain))
     print("patched index.jsc sha256:", hashlib.sha256(patched_jsc).hexdigest())
     print("patched plain JS bytes:", len(patched_plain))
+    print("deb sha256:", hashlib.sha256(raw).hexdigest())
     print("deb version:", deb_version)
     print("packaged cfg rt:", "rt=0" if "rt=0" in cfg_text else "<missing>")
+    print("mock harness:", str(repo / "tools" / "mock_cgm_bootstrap.js"))
+    print("static report:", str(repo / "docs" / "IAP-RICHES-STATIC-12602.md"))
     print("static closure: OK")
     return 0
 
