@@ -3,7 +3,7 @@
 No device writes, app launch, or purchase operations are performed.
 """
 from __future__ import annotations
-import argparse, gzip, hashlib, io, plistlib, struct, tarfile, zipfile, zlib
+import argparse, gzip, hashlib, io, plistlib, re, struct, tarfile, zipfile, zlib
 from pathlib import Path
 
 DELTA = 0x9E3779B9
@@ -46,6 +46,48 @@ def gunzip(data: bytes) -> bytes:
     return out
 
 
+def parse_deb(raw: bytes) -> dict[str, bytes]:
+    assert raw[:8] == b"!<arch>\n"
+    off = 8
+    members: dict[str, bytes] = {}
+    while off + 60 <= len(raw):
+        hdr = raw[off:off + 60]
+        name = hdr[:16].decode("ascii", "replace").strip().rstrip("/")
+        size = int(hdr[48:58].decode("ascii", "replace").strip())
+        body = raw[off + 60:off + 60 + size]
+        members[name] = body
+        off += 60 + size + (size & 1)
+    assert "data.tar.gz" in members and "control.tar.gz" in members
+    return members
+
+
+def tar_members(tar_gz: bytes) -> dict[str, bytes]:
+    out: dict[str, bytes] = {}
+    with tarfile.open(fileobj=io.BytesIO(tar_gz), mode="r:gz") as t:
+        for m in t.getmembers():
+            key = m.name.lstrip("./")
+            if m.isfile():
+                f = t.extractfile(m)
+                out[key] = f.read() if f else b""
+            else:
+                out[key] = b""
+    return out
+
+
+def control_field(control: bytes, name: str) -> str:
+    rx = re.compile(rb"^" + re.escape(name.encode()) + rb":\s*(.*?)\s*$", re.M)
+    m = rx.search(control)
+    return m.group(1).decode("utf-8", "replace") if m else ""
+
+
+def version_tuple(v: str) -> tuple[int, ...]:
+    nums = []
+    for part in re.split(r"[^0-9]+", v):
+        if part:
+            nums.append(int(part))
+    return tuple(nums)
+
+
 def read_jsc(ipa: Path) -> bytes:
     with zipfile.ZipFile(ipa) as z:
         return z.read("Payload/AirplaneCooking-mobile.app/assets/scriptBundle/index.jsc")
@@ -79,28 +121,35 @@ def main() -> int:
     assert patched_jsc != jsc
     # Read the Debian ar container without depending on dpkg-deb/ar being on PATH.
     raw = ns.deb.read_bytes()
-    assert raw[:8] == b"!<arch>\n"
-    off = 8
-    members = {}
-    while off + 60 <= len(raw):
-        hdr = raw[off:off + 60]
-        name = hdr[:16].decode("ascii", "replace").strip().rstrip("/")
-        size = int(hdr[48:58].decode("ascii", "replace").strip())
-        body = raw[off + 60:off + 60 + size]
-        members[name] = body
-        off += 60 + size + (size & 1)
-    assert "data.tar.gz" in members and "control.tar.gz" in members
-    with tarfile.open(fileobj=io.BytesIO(members["data.tar.gz"]), mode="r:gz") as t:
-        data_names = {m.name.lstrip("./") for m in t.getmembers()}
-    with tarfile.open(fileobj=io.BytesIO(members["control.tar.gz"]), mode="r:gz") as t:
-        ctrl_names = {m.name.lstrip("./") for m in t.getmembers()}
+    members = parse_deb(raw)
+    data_files = tar_members(members["data.tar.gz"])
+    ctrl_files = tar_members(members["control.tar.gz"])
+    data_names = set(data_files)
+    ctrl_names = set(ctrl_files)
     assert "var/jb/usr/lib/TweakInject/CookingGoMod.index12602.jsc" in data_names
     assert "control" in ctrl_names and "postinst" in ctrl_names and "postrm" in ctrl_names
+    deb_version = control_field(ctrl_files["control"], "Version")
+    cfg_path = "var/jb/usr/lib/TweakInject/CookingGoMod.cfg"
+    dylib_path = "var/jb/usr/lib/TweakInject/CookingGoMod.dylib"
+    assert cfg_path in data_files and dylib_path in data_files
+    cfg_text = data_files[cfg_path].decode("utf-8", "replace")
+    if version_tuple(deb_version) >= (1, 3, 2):
+        src_m = (repo / "src" / "CookingGoMod.m").read_text(encoding="utf-8")
+        runtime_doc = (repo / "docs" / "RUNTIME-HOOK-12602.md").read_text(encoding="utf-8")
+        assert "rt=0" in cfg_text, "packaged cfg must keep runtime hook default-off"
+        assert "kCGMEvalStringOffset12602 = 0x1c28a48" in src_m
+        assert "CGMInstallRuntimeEvalHook" in src_m
+        assert "runtime evalString hook disabled by config" in src_m
+        assert b"runtime evalString hook installed" in data_files[dylib_path]
+        assert "candidate_evalString_function_va = 0x101c28a48" in runtime_doc
+        assert "target = main_mach_header + 0x1c28a48" in runtime_doc
     print("IPA sha256:", hashlib.sha256(ns.ipa.read_bytes()).hexdigest())
     print("original index.jsc sha256:", hashlib.sha256(jsc).hexdigest())
     print("original plain JS bytes:", len(plain))
     print("patched index.jsc sha256:", hashlib.sha256(patched_jsc).hexdigest())
     print("patched plain JS bytes:", len(patched_plain))
+    print("deb version:", deb_version)
+    print("packaged cfg rt:", "rt=0" if "rt=0" in cfg_text else "<missing>")
     print("static closure: OK")
     return 0
 

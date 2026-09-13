@@ -170,5 +170,6 @@ Verdict: the immediate crash root is signing/library-validation/dyld loading sta
 - 新 IPA SHA-256：`8fd0e3a5259f8561773fb6a60db5aaf21c57ab44df1487b9981018f865057710`。
 - `1.26.02` 的 `scriptBundle/config.json` 为 `encrypted:true`，运行时脚本是 `index.jsc`；不再尝试把 JS 文本追加到 `index.jsc`。
 - 工具 `tools/patch_cocos_jsc.py` 完成 XXTEA → gzip 解包、追加 bootstrap、gzip → XXTEA 回封，并执行 round-trip self-check。
+- `tools/static_verify_12602.py` 同时读取 DEB ar/tar 结构；v1.3.2+ 会断言包内 `rt=0`、源码 `kCGMEvalStringOffset12602 = 0x1c28a48`、dylib runtime hook marker、`docs/RUNTIME-HOOK-12602.md` 坐标一致。
 - 静态包验收：`dpkg-deb -f`、`dpkg-deb -c`、`tools/verify_deb.sh` 均通过；目标 DEB SHA-256：`8B596DA14EE275EF66F12590ADFBC35CE080CDF99F200052EF0B4A831E5FD0F4`。
 - 设备侧已确认原始 `index.jsc` SHA-256 为 `cb1825d4c535f77de8cafbec1d4b73e65d10f43835d04cb091c856b4967269d0`；旧版路径未被错误修改。

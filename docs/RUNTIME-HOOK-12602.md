@@ -225,6 +225,17 @@ Important behavior:
 
 The C++ ABI remains marked experimental until IDA/r2 confirms callers around `0x101c28a48`.
 
+Regression verifier:
+
+```powershell
+python F:\测试\cookingGO\github-cookinggo-mod\tools\static_verify_12602.py `
+  --ipa "F:\测试\cookingGO\Cooking Go_1.26.02.ipa" `
+  --deb "F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.2_iphoneos-arm64.deb" `
+  --repo "F:\测试\cookingGO\github-cookinggo-mod"
+```
+
+For v1.3.2+ this asserts `rt=0` remains default-off and that source, dylib marker, and documented `0x1c28a48` coordinate agree.
+
 ## Verification target after implementation
 
 Inside the app container:
