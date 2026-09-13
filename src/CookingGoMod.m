@@ -47,6 +47,11 @@ static NSString * const kCGMInjectMark   = @"\n/* ==== CookingGoMod bootstrap ==
 
 /* ============================== logging =================================== */
 
+/* When 0, native diagnostics go to NSLog + mod.log only. The on-screen log area
+   then carries just the operator-facing results (修改前 / 输入表达 / 修改后 and
+   the JS receipts). Set vlog=1 to mirror the diagnostics into the panel again. */
+static int gCfgVerboseLog = 0;
+
 static NSMutableArray<NSString *> *gLogStore = nil;
 static void (^gLogSink)(NSString *line) = nil;
 static NSString *gMailboxPath = nil;
@@ -77,10 +82,11 @@ static void CGMLog(NSString *fmt, ...) {
     va_end(ap);
     NSString *line = [NSString stringWithFormat:@"[%@] %@", [[NSDate date] description], body];
     NSLog(@"[CookingGoMod] %@", body);
+    CGMFileAppend(line);
+    if (!gCfgVerboseLog) { return; }
     if (!gLogStore) { gLogStore = [NSMutableArray array]; }
     [gLogStore addObject:body];
     if (gLogStore.count > 400) { [gLogStore removeObjectAtIndex:0]; }
-    CGMFileAppend(line);
     if (gLogSink) {
         NSString *copy = [body copy];
         dispatch_async(dispatch_get_main_queue(), ^{ gLogSink(copy); });
@@ -94,6 +100,7 @@ static int gCfgPosix   = 0;   /* POSIX open-family hooks: invasive, opt-in      
 static int gCfgOverlay = 1;   /* floating panel UI                               */
 static int gCfgPanelOpen = 0; /* open the panel at launch (layout diagnostics)   */
 static int gCfgRot = 0;      /* rotate the overlay to match the game's drawing  */
+static int gCfgVerboseLogCfg = 0;
 
 static void CGMApplyConfigLine(const char *line) {
     if (!line) { return; }
@@ -113,6 +120,7 @@ static void CGMApplyConfigLine(const char *line) {
     else if (strcmp(key, "overlay") == 0) { gCfgOverlay = val; }
     else if (strcmp(key, "panel") == 0) { gCfgPanelOpen = val; }
     else if (strcmp(key, "rot") == 0) { gCfgRot = atoi(eq + 1); }
+    else if (strcmp(key, "vlog") == 0) { gCfgVerboseLogCfg = val; }
 }
 
 static void CGMReadConfigFile(const char *path) {
@@ -132,7 +140,9 @@ static void CGMReadConfig(void) {
         NSString *p = [home stringByAppendingPathComponent:@"Documents/cookingmod/cfg.txt"];
         CGMReadConfigFile(p.fileSystemRepresentation);
     }
-    CGMLog(@"config: objc=%d posix=%d overlay=%d panel=%d rot=%d", gCfgObjc, gCfgPosix, gCfgOverlay, gCfgPanelOpen, gCfgRot);
+    gCfgVerboseLog = gCfgVerboseLogCfg;
+    CGMLog(@"config: objc=%d posix=%d overlay=%d panel=%d rot=%d vlog=%d",
+           gCfgObjc, gCfgPosix, gCfgOverlay, gCfgPanelOpen, gCfgRot, gCfgVerboseLog);
 }
 
 /* ============================== write helpers ============================= */
@@ -207,6 +217,8 @@ static const char *kCGMHitNames[kCGMHitCount] = {
     "fopen", "open", "openat", "guarded_open_np", "open_dprotected_np"
 };
 static volatile int gHits[kCGMHitCount];
+static volatile int gWindowTouchesBegan;   /* every touch the overlay window sees */
+static volatile int gBallTouchesBegan;     /* touches that actually landed on the ball */
 static void CGMBumpHit(int i) { if (i >= 0 && i < kCGMHitCount) { __sync_fetch_and_add(&gHits[i], 1); } }
 
 /* ============================== JS injection ============================== */
@@ -594,10 +606,12 @@ static const int kCGMResCount = 5;
 - (void)sendEvent:(UIEvent *)event {
     /* Any touch that makes it into this window is logged once, so a missing
        drag can be told apart from touches never arriving at all. */
+    /* Counted, never logged per event: the old version appended a line to
+       mod.log for every touch and that log was rendered into the on-screen
+       debug view, which produced thousands of lines of noise. */
     for (UITouch *t in event.allTouches) {
         if (t.phase == UITouchPhaseBegan) {
-            CGMLog(@"window touch began at %.0f,%.0f (type=%ld)",
-                   [t locationInView:self].x, [t locationInView:self].y, (long)t.type);
+            __sync_fetch_and_add(&gWindowTouchesBegan, 1);
         }
     }
     [super sendEvent:event];
@@ -666,7 +680,6 @@ static const int kCGMResCount = 5;
 
     __weak typeof(self) weakSelf = self;
     gLogSink = ^(NSString *line) { [weakSelf appendLog:line]; };
-    if (gLogStore.count) { for (NSString *l in [gLogStore copy]) { [self appendLog:l]; } }
 }
 
 - (void)dealloc {
@@ -706,7 +719,7 @@ static const int kCGMResCount = 5;
     CGPoint p = [t locationInView:self.stage];
     self.ballTouchOffset = CGPointMake(b.center.x - p.x, b.center.y - p.y);
     self.ballDragMoved = NO;
-    CGMLog(@"touch down on ball (ball=%.0f,%.0f touch=%.0f,%.0f)", b.center.x, b.center.y, p.x, p.y);
+    __sync_fetch_and_add(&gBallTouchesBegan, 1);
 }
 
 - (void)ballTouchMoved:(UIButton *)b withEvent:(UIEvent *)e {
@@ -1312,10 +1325,8 @@ static void CGMTick(void) {
             }
         }
 
-        if (hello && !gEngineReady) {
-            [gVC appendLog:[NSString stringWithFormat:@"[JS] bootstrap v%@ 已注入，等待引擎 init",
-                            hello[@"version"] ?: @"?"]];
-        }
+        /* Status chatter stays out of the visible log; mod.log / ui_state.json
+           carry the live state. */
 
         /* Hook-hit telemetry: tells us which file-read surface the engine uses. */
         {
@@ -1329,7 +1340,7 @@ static void CGMTick(void) {
                 if (v != lastReported[i]) { changed = YES; lastReported[i] = v; }
             }
             if (changed && reportBudget-- > 0) {
-                CGMLog(@"hook hits: %@", parts.count ? [parts componentsJoinedByString:@" "] : @"(none)");
+                /* hits.json only - keep mod.log readable. */
             }
             static int lastSig = -1;
             int sig = 0;
@@ -1342,6 +1353,8 @@ static void CGMTick(void) {
                 }
                 d[@"injected"] = @(gInjectLogDone);
                 d[@"tempCopy"] = @(gTempScriptPath != nil);
+                d[@"windowTouchBegan"] = @(gWindowTouchesBegan);
+                d[@"ballTouchBegan"] = @(gBallTouchesBegan);
                 CGMWriteJSON(d, [gChosenMailbox stringByAppendingPathComponent:@"hits.json"]);
             }
         }
