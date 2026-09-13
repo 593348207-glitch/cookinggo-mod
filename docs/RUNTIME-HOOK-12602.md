@@ -217,7 +217,7 @@ payload guard = gRuntimeEvalPayloadDone + gRuntimeEvalReentry
 
 Important behavior:
 
-- default `rt=0` preserves the existing 1.25.03 and 1.3.1 behavior;
+- default `rt=0` preserves the existing 1.25.03 and 1.3.1/1.3.2 default behavior;
 - hook installation is attempted only after config load and mailbox/bootstrap file write;
 - the replacement calls the original eval first, then evals `CGMBootstrap.js` once;
 - `CGMBootstrap.js` already handles early execution by polling/binding until `window.__require("Manager")` is ready;

@@ -93,7 +93,7 @@ AdjustSdk.framework: TeamIdentifier=KT32KPGAK9
 2. Launch the game without the tweak.
 3. Run `device_launch_triage.py`; require no `Library Validation failed` and no `dyld(6) code:1`.
 4. Confirm live `index.jsc` SHA if still using the supported static payload path.
-5. Install `com.seagull.cookinggomod_1.3.1_iphoneos-arm64.deb`.
+5. Install `com.seagull.cookinggomod_1.3.2_iphoneos-arm64.deb`.
 6. Validate overlay/state files.
 7. Only then continue with runtime injection work for 1.26.02 encrypted JSC.
 

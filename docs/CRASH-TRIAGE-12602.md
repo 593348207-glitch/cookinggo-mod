@@ -94,5 +94,5 @@ Next fix path is to install a consistently signed 1.26.02 app bundle: either a c
 ```powershell
 python F:\测试\cookingGO\github-cookinggo-mod\tools\analyze_ipa_closure.py --ipa F:\测试\cookingGO\Cooking Go_1.26.02.ipa
 python F:\测试\cookingGO\github-cookinggo-mod\tools\device_launch_triage.py --mcp F:\测试\cookingGO\mcp.py --out F:\测试\cookingGO\_work\device_launch_triage_12602.txt
-python F:\测试\cookingGO\github-cookinggo-mod\tools\static_verify_12602.py --ipa F:\测试\cookingGO\Cooking Go_1.26.02.ipa --deb F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.1_iphoneos-arm64.deb --repo F:\测试\cookingGO\github-cookinggo-mod
+python F:\测试\cookingGO\github-cookinggo-mod\tools\static_verify_12602.py --ipa F:\测试\cookingGO\Cooking Go_1.26.02.ipa --deb F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.2_iphoneos-arm64.deb --repo F:\测试\cookingGO\github-cookinggo-mod
 ```

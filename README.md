@@ -63,7 +63,7 @@ on-disk `index.js` as root**, keeping a pristine copy at
 `/var/mobile/Library/Caches/cookingmod/index.js.orig`. `DEBIAN/postrm` restores it.
 The ObjC hooks remain in the dylib for diagnostics only (`objc=0` disables them).
 
-For 1.26.02, `index.jsc` is encrypted/gzipped XXTEA. v1.3.1 ships a statically verified patched JSC payload for CI/package closure, but **postinst deliberately leaves the live signed app bundle unchanged**. Direct live mutation of the app bundle can break the install/signature state; runtime injection must move to a decrypted-buffer / Cocos script-engine hook before launch.
+For 1.26.02, `index.jsc` is encrypted/gzipped XXTEA. v1.3.1+ ships a statically verified patched JSC payload for CI/package closure, but **postinst deliberately leaves the live signed app bundle unchanged**. Direct live mutation of the app bundle can break the install/signature state; runtime injection must move to a decrypted-buffer / Cocos script-engine hook before launch.
 
 Because the pod is re-signed after a game update, **re-run `dpkg -i` after updating the game**; the
 runtime logs a warning if the bootstrap is missing.
@@ -170,5 +170,5 @@ Verdict: the immediate crash root is signing/library-validation/dyld loading sta
 - 新 IPA SHA-256：`8fd0e3a5259f8561773fb6a60db5aaf21c57ab44df1487b9981018f865057710`。
 - `1.26.02` 的 `scriptBundle/config.json` 为 `encrypted:true`，运行时脚本是 `index.jsc`；不再尝试把 JS 文本追加到 `index.jsc`。
 - 工具 `tools/patch_cocos_jsc.py` 完成 XXTEA → gzip 解包、追加 bootstrap、gzip → XXTEA 回封，并执行 round-trip self-check。
-- 静态包验收：`dpkg-deb -f`、`dpkg-deb -c`、`tools/verify_deb.sh` 均通过；目标 DEB SHA-256：`2D7F44A0EDC1E3F8465EC62AFE933EE4825055357EF90517DACA19B687486FD9`。
+- 静态包验收：`dpkg-deb -f`、`dpkg-deb -c`、`tools/verify_deb.sh` 均通过；目标 DEB SHA-256：`8B596DA14EE275EF66F12590ADFBC35CE080CDF99F200052EF0B4A831E5FD0F4`。
 - 设备侧已确认原始 `index.jsc` SHA-256 为 `cb1825d4c535f77de8cafbec1d4b73e65d10f43835d04cb091c856b4967269d0`；旧版路径未被错误修改。
