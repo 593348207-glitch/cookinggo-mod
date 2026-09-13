@@ -922,12 +922,15 @@ static const int kCGMResCount = 5;
     return b;
 }
 
+/* NOTE: `view.transform` holds only the rotation around the view's centre, so
+   applying it to a point gives an offset, not a position - that mistake put the
+   ball off screen in 1.1.3. Convert through the view hierarchy instead. */
 - (CGPoint)viewPointForStagePoint:(CGPoint)sp {
-    return CGPointApplyAffineTransform(sp, self.stage.transform);
+    return [self.stage convertPoint:sp toView:self.view];
 }
 
 - (CGPoint)stagePointForViewPoint:(CGPoint)vp {
-    return CGPointApplyAffineTransform(vp, CGAffineTransformInvert(self.stage.transform));
+    return [self.view convertPoint:vp toView:self.stage];
 }
 
 - (void)layoutStage {
