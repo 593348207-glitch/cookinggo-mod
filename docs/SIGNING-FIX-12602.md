@@ -32,6 +32,8 @@ Expected current evidence:
 Missing non-system @rpath deps: 0
 App _CodeSignature/CodeResources: False
 Framework CodeResources missing: 23/23
+Signing team IDs: <none>
+Binaries with empty Team ID: 24
 ```
 
 ## Device launch triage
@@ -78,7 +80,7 @@ bash tools/resign_ipa_recursive.sh \
   --out ./CookingGo_1.26.02.resigned.ipa
 ```
 
-The important invariant is that the main executable and every embedded framework are signed consistently. The previous broken state had:
+The analyzer parses Mach-O embedded CodeDirectory identifiers, hash types, flags and Team IDs. The important invariant is that the main executable and every embedded framework are signed consistently and the regenerated archive contains valid bundle/framework CodeResources. The previous broken installed state had:
 
 ```text
 main executable: TeamIdentifier=not set

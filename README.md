@@ -131,7 +131,7 @@ Current device state (2026-09-13): the game exits before JS/bootstrap. This is n
 - launch log shows `RBSProcessExitStatus| domain:dyld(6) code:1`;
 - kernel log shows `Library Validation failed: Rejecting .../Frameworks/AdjustSdk.framework/AdjustSdk ... for process ... (Team ID: none, platform: yes), reason: mapping process is a platform binary, but mapped file is not`;
 - `ldid -h` on the installed main executable reports `TeamIdentifier=not set`, while `AdjustSdk.framework` reports `TeamIdentifier=KT32KPGAK9`;
-- the supplied 1.26.02 IPA has no `.app/_CodeSignature/CodeResources`, and all 23 embedded frameworks are missing framework `_CodeSignature/CodeResources` entries in the archive.
+- the supplied 1.26.02 IPA has no `.app/_CodeSignature/CodeResources`, and all 23 embedded frameworks are missing framework `_CodeSignature/CodeResources` entries in the archive; the static analyzer also reports `Signing team IDs: <none>` / `Binaries with empty Team ID: 24`.
 
 Repro tools:
 

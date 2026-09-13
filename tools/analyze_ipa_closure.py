@@ -39,6 +39,24 @@ LC_ENCRYPTION_INFO_64 = 0x2C
 LC_BUILD_VERSION = 0x32
 LC_VERSION_MIN_IPHONEOS = 0x25
 
+CSMAGIC_EMBEDDED_SIGNATURE = 0xFADE0CC0
+CSMAGIC_CODEDIRECTORY = 0xFADE0C02
+CSMAGIC_EMBEDDED_ENTITLEMENTS = 0xFADE7171
+CSMAGIC_BLOBWRAPPER = 0xFADE0B01
+CSSLOT_CODEDIRECTORY = 0
+CSSLOT_ENTITLEMENTS = 5
+CSSLOT_DER_ENTITLEMENTS = 7
+CSSLOT_SIGNATURESLOT = 0x10000
+CS_ADHOC = 0x00000002
+CS_PLATFORM_BINARY = 0x04000000
+
+HASH_TYPE_NAMES = {
+    1: "sha1",
+    2: "sha256",
+    3: "sha256_truncated",
+    4: "sha384",
+}
+
 CPU_NAMES = {
     0x0100000C: "arm64",
     0x0200000C: "arm64_32",
@@ -85,6 +103,7 @@ class SliceInfo:
     build: list[dict[str, str]]
     minos: list[dict[str, str]]
     code_signature: dict[str, int] | None
+    code_signature_info: dict[str, Any] | None
     encryption: dict[str, int] | None
 
 
@@ -120,6 +139,144 @@ def fat_slices(buf: bytes) -> list[tuple[int, int, int | None, int | None]]:
             pos += 20
         out.append((int(off), int(size), cputype, cpusubtype))
     return out
+
+
+def code_sign_flag_names(flags: int) -> list[str]:
+    names: list[str] = []
+    if flags & CS_ADHOC:
+        names.append("adhoc")
+    if flags & CS_PLATFORM_BINARY:
+        names.append("platform")
+    # Preserve the raw value because Apple adds flags over time and the raw bits
+    # are more useful than silently dropping unknown security state.
+    return names
+
+
+def _read_be32(buf: bytes, off: int) -> int | None:
+    if off < 0 or off + 4 > len(buf):
+        return None
+    return struct.unpack(">I", buf[off:off + 4])[0]
+
+
+def _read_be64(buf: bytes, off: int) -> int | None:
+    if off < 0 or off + 8 > len(buf):
+        return None
+    return struct.unpack(">Q", buf[off:off + 8])[0]
+
+
+def parse_code_directory(cd: bytes, blob_offset: int, slot_type: int) -> dict[str, Any]:
+    """Parse the fields needed for signing identity comparison.
+
+    CodeDirectory is big-endian regardless of the Mach-O endianness. Offsets are
+    relative to the beginning of the CodeDirectory blob.
+    """
+    if len(cd) < 44:
+        return {"slot": slot_type, "offset": blob_offset, "error": "short CodeDirectory"}
+    magic, length, version, flags, hash_off, ident_off, n_special, n_code, code_limit = struct.unpack(">IIIIIIIII", cd[:36])
+    hash_size, hash_type, platform, page_size = struct.unpack(">BBBB", cd[36:40])
+    scatter_off = _read_be32(cd, 40)
+    team_off = _read_be32(cd, 44) if version >= 0x20100 and len(cd) >= 48 else None
+    code_limit64 = _read_be64(cd, 56) if version >= 0x20200 and len(cd) >= 64 else None
+    exec_seg_flags = _read_be64(cd, 80) if version >= 0x20300 and len(cd) >= 88 else None
+    runtime = _read_be32(cd, 88) if version >= 0x20400 and len(cd) >= 92 else None
+
+    ident = cstr(cd, ident_off, length) if ident_off else ""
+    team = cstr(cd, team_off, length) if team_off else ""
+    return {
+        "slot": slot_type,
+        "offset": blob_offset,
+        "magic": f"0x{magic:08x}",
+        "length": length,
+        "version": f"0x{version:05x}",
+        "flags": f"0x{flags:x}",
+        "flag_names": code_sign_flag_names(flags),
+        "identifier": ident,
+        "team_id": team,
+        "hash_offset": hash_off,
+        "hash_size": hash_size,
+        "hash_type": HASH_TYPE_NAMES.get(hash_type, str(hash_type)),
+        "platform": platform,
+        "page_size_log2": page_size,
+        "scatter_offset": scatter_off,
+        "n_special_slots": n_special,
+        "n_code_slots": n_code,
+        "code_limit": code_limit64 or code_limit,
+        "exec_seg_flags": exec_seg_flags,
+        "runtime": runtime,
+    }
+
+
+def parse_code_signature_blob(buf: bytes, code_signature: dict[str, int] | None, slice_off: int) -> dict[str, Any] | None:
+    if not code_signature:
+        return None
+    dataoff = code_signature["dataoff"]
+    datasize = code_signature["datasize"]
+    # Thin Mach-O files use dataoff directly. Some fat/universal tooling reports
+    # offsets relative to the slice. Try both to keep the script robust.
+    candidates = [dataoff]
+    if slice_off:
+        candidates.append(slice_off + dataoff)
+    base = None
+    blob = b""
+    for cand in candidates:
+        if cand < 0 or cand + 8 > len(buf):
+            continue
+        magic = _read_be32(buf, cand)
+        if magic in (CSMAGIC_EMBEDDED_SIGNATURE, CSMAGIC_CODEDIRECTORY):
+            base = cand
+            blob = buf[cand:cand + datasize]
+            break
+    if base is None:
+        return {"error": "code signature blob not found", "dataoff": dataoff, "datasize": datasize}
+
+    magic = _read_be32(blob, 0)
+    length = _read_be32(blob, 4)
+    if magic == CSMAGIC_CODEDIRECTORY:
+        return {
+            "type": "CodeDirectory",
+            "offset": base,
+            "length": length,
+            "code_directories": [parse_code_directory(blob[:length or len(blob)], base, CSSLOT_CODEDIRECTORY)],
+            "has_cms_signature": False,
+            "has_entitlements": False,
+            "slots": [],
+        }
+    if magic != CSMAGIC_EMBEDDED_SIGNATURE or len(blob) < 12:
+        return {"error": f"unsupported code signature magic 0x{magic or 0:08x}", "offset": base, "length": length}
+
+    count = _read_be32(blob, 8) or 0
+    slots: list[dict[str, Any]] = []
+    code_dirs: list[dict[str, Any]] = []
+    has_entitlements = False
+    has_cms = False
+    for i in range(count):
+        idx_off = 12 + i * 8
+        if idx_off + 8 > len(blob):
+            break
+        slot_type = _read_be32(blob, idx_off)
+        rel_off = _read_be32(blob, idx_off + 4)
+        if slot_type is None or rel_off is None or rel_off + 8 > len(blob):
+            continue
+        sub_magic = _read_be32(blob, rel_off) or 0
+        sub_len = _read_be32(blob, rel_off + 4) or 0
+        slots.append({"type": slot_type, "offset": rel_off, "magic": f"0x{sub_magic:08x}", "length": sub_len})
+        if sub_magic == CSMAGIC_CODEDIRECTORY and sub_len:
+            code_dirs.append(parse_code_directory(blob[rel_off:rel_off + sub_len], base + rel_off, slot_type))
+        elif slot_type in (CSSLOT_ENTITLEMENTS, CSSLOT_DER_ENTITLEMENTS):
+            has_entitlements = True
+        elif slot_type == CSSLOT_SIGNATURESLOT:
+            has_cms = True
+
+    return {
+        "type": "SuperBlob",
+        "offset": base,
+        "length": length,
+        "slot_count": count,
+        "slots": slots,
+        "code_directories": code_dirs,
+        "has_cms_signature": has_cms,
+        "has_entitlements": has_entitlements,
+    }
 
 
 def parse_macho(buf: bytes) -> list[SliceInfo]:
@@ -186,7 +343,8 @@ def parse_macho(buf: bytes) -> list[SliceInfo]:
                 ver, sdk = struct.unpack(endian + "II", b[pos + 8:pos + 16])
                 minos.append({"minos": version24(ver), "sdk": version24(sdk)})
             pos += cmdsize
-        result.append(SliceInfo(arch, slice_off, slice_size, rpaths, loads, build, minos, code_signature, encryption))
+        code_signature_info = parse_code_signature_blob(buf, code_signature, slice_off)
+        result.append(SliceInfo(arch, slice_off, slice_size, rpaths, loads, build, minos, code_signature, code_signature_info, encryption))
     return result
 
 
@@ -255,6 +413,29 @@ def analyze(ipa: str) -> dict[str, Any]:
                         continue
                     dep_missing.append({"binary": path, "dep": dep})
 
+        signing_summaries: list[dict[str, Any]] = []
+        for b in binaries:
+            if not b.slices:
+                continue
+            sig = b.slices[0].code_signature_info or {}
+            cds = sig.get("code_directories") or []
+            # Prefer the strongest modern CodeDirectory when a SuperBlob carries
+            # both SHA-1 and SHA-256/384 alternate code directories.
+            cd = next((x for x in cds if x.get("hash_type") in ("sha384", "sha256")), cds[0] if cds else {})
+            signing_summaries.append({
+                "path": b.path,
+                "kind": b.kind,
+                "identifier": cd.get("identifier", ""),
+                "team_id": cd.get("team_id", ""),
+                "flags": cd.get("flags", ""),
+                "flag_names": cd.get("flag_names", []),
+                "hash_type": cd.get("hash_type", ""),
+                "has_cms_signature": sig.get("has_cms_signature"),
+                "has_entitlements": sig.get("has_entitlements"),
+            })
+        non_empty_team_ids = sorted({x["team_id"] for x in signing_summaries if x.get("team_id")})
+        empty_team_paths = [x["path"] for x in signing_summaries if not x.get("team_id")]
+
         return {
             "ipa": os.path.abspath(ipa),
             "ipa_sha256": sha256_file(ipa),
@@ -270,6 +451,9 @@ def analyze(ipa: str) -> dict[str, Any]:
             "has_embedded_mobileprovision": app_prefix + "embedded.mobileprovision" in name_set,
             "framework_count": len(bins) - 1,
             "binaries": [asdict(b) for b in binaries],
+            "signing_summaries": signing_summaries,
+            "non_empty_team_ids": non_empty_team_ids,
+            "empty_team_id_paths": empty_team_paths,
             "missing_rpath_dependencies": dep_missing,
             "os_swift_rpath_dependencies": dep_os_swift,
         }
@@ -289,7 +473,18 @@ def print_text(r: dict[str, Any]) -> None:
     print(f"  path: {main['path']}")
     print(f"  sha256: {main['sha256']}")
     print(f"  arch: {sl.get('arch')}  build={sl.get('build')}  encryption={sl.get('encryption')}  code_signature={sl.get('code_signature')}")
+    main_cds = (sl.get('code_signature_info') or {}).get('code_directories') or [{}]
+    main_cd = next((x for x in main_cds if x.get('hash_type') in ('sha384', 'sha256')), main_cds[0])
+    print(f"  signing: identifier={main_cd.get('identifier', '')} team={main_cd.get('team_id', '') or '<empty>'} flags={main_cd.get('flags', '')} {main_cd.get('flag_names', [])}")
     print(f"  rpaths: {sl.get('rpaths')}")
+
+    teams = r.get('non_empty_team_ids', [])
+    empty_team = r.get('empty_team_id_paths', [])
+    print(f"\nSigning team IDs: {teams if teams else '<none>'}")
+    if empty_team:
+        print(f"Binaries with empty Team ID: {len(empty_team)}")
+        for path in empty_team[:20]:
+            print(f"  - {path}")
 
     no_coderes = [b['path'] for b in r['binaries'] if b['kind'] == 'framework' and not b.get('has_framework_coderesources')]
     if no_coderes:
@@ -311,6 +506,8 @@ def print_text(r: dict[str, Any]) -> None:
         print("  WARN: App bundle has no _CodeSignature/CodeResources in the IPA; expect signing/library-validation trouble after ad-hoc/resign installs.")
     if no_coderes:
         print("  WARN: Embedded frameworks also lack _CodeSignature/CodeResources entries in the archive.")
+    if r.get('empty_team_id_paths') and r.get('non_empty_team_ids'):
+        print("  WARN: Mixed signing identity state: at least one binary has empty Team ID while others have Team IDs. This matches Library Validation failure patterns after bad resigning.")
 
 
 def main() -> int:

@@ -66,7 +66,9 @@ embedded.mobileprovision: False
 Embedded framework binaries: 23
 Framework CodeResources missing: 23/23
 Missing non-system @rpath deps: 0
-Closure verdict: PASS for non-system @rpath dependencies, WARN for missing CodeResources.
+Signing team IDs: <none>
+Binaries with empty Team ID: 24
+Closure verdict: PASS for non-system @rpath dependencies, WARN for missing CodeResources/signing resources.
 ```
 
 Main executable Mach-O facts:
