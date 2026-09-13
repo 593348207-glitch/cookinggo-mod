@@ -139,6 +139,9 @@ Repro tools:
 ```powershell
 python F:\测试\cookingGO\github-cookinggo-mod\tools\analyze_ipa_closure.py --ipa F:\测试\cookingGO\Cooking Go_1.26.02.ipa
 python F:\测试\cookingGO\github-cookinggo-mod\tools\device_launch_triage.py --mcp F:\测试\cookingGO\mcp.py --out F:\测试\cookingGO\_work\device_launch_triage_12602.txt
+python F:\测试\cookingGO\github-cookinggo-mod\tools\find_runtime_hook_points.py --ipa F:\测试\cookingGO\Cooking Go_1.26.02.ipa --limit 30
+python F:\测试\cookingGO\github-cookinggo-mod\tools\macho_string_xrefs.py --ipa F:\测试\cookingGO\Cooking Go_1.26.02.ipa --pattern "ScriptEngine::evalString"
+python F:\测试\cookingGO\github-cookinggo-mod\tools\postfix_verify_12602.py --mcp F:\测试\cookingGO\mcp.py --out F:\测试\cookingGO\_work\postfix_verify.json
 ```
 
 Fix helper for macOS recursive re-signing:
