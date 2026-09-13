@@ -1,24 +1,37 @@
 #!/bin/sh
 # CookingGoMod - post-install.
-#
-# The game does not read assets/scriptBundle/index.js through any ObjC file API
-# (verified on device 2026-09-12 with hook-hit telemetry), and hooking the POSIX
-# open family kills the process, so the bootstrap is appended to the script on
-# disk here, as root, with a pristine copy kept for repeat installs / uninstall.
+# 1.25.03 used plain assets/scriptBundle/index.js, patched by appending bootstrap.
+# 1.26.02 moved scriptBundle to encrypted/gzipped XXTEA index.jsc, so this package
+# carries a prebuilt patched jsc payload for that exact release.
 
 INJ=/var/jb/usr/lib/TweakInject
 PAYLOAD="$INJ/CookingGoMod.bootstrap.js"
+JSC_PAYLOAD="$INJ/CookingGoMod.index12602.jsc"
 BAK_DIR=/var/mobile/Library/Caches/cookingmod
 APP_EXEC=AirplaneCooking-mobile.app
 BID=com.airplanecooking.chef.kitchen.restaurant.diner
+JSC_ORIG_SHA=cb1825d4c535f77de8cafbec1d4b73e65d10f43835d04cb091c856b4967269d0
+JSC_ORIG_SIZE=880072
 
 chmod 755 "$INJ/CookingGoMod.dylib" 2>/dev/null
-chmod 644 "$INJ/CookingGoMod.plist" "$INJ/CookingGoMod.cfg" "$PAYLOAD" 2>/dev/null
+chmod 644 "$INJ/CookingGoMod.plist" "$INJ/CookingGoMod.cfg" "$PAYLOAD" "$JSC_PAYLOAD" 2>/dev/null
 
 if [ ! -f "$PAYLOAD" ]; then
     echo "CookingGoMod: bootstrap payload missing, skipping script patch"
     exit 0
 fi
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+    elif command -v sha256 >/dev/null 2>&1; then
+        sha256 -q "$1" 2>/dev/null
+    else
+        echo ""
+    fi
+}
 
 mkdir -p "$BAK_DIR" 2>/dev/null
 
@@ -29,29 +42,54 @@ for BUNDLE in /private/var/containers/Bundle/Application/*/"$APP_EXEC" \
     if [ -f "$BUNDLE/Info.plist" ]; then
         grep -qa "$BID" "$BUNDLE/Info.plist" 2>/dev/null || continue
     fi
-    SCRIPT="$BUNDLE/assets/scriptBundle/index.js"
-    [ -f "$SCRIPT" ] || continue
 
-    BAK="$BAK_DIR/index.js.orig"
-    if [ ! -f "$BAK" ]; then
-        cp "$SCRIPT" "$BAK" 2>/dev/null || continue
+    SCRIPT="$BUNDLE/assets/scriptBundle/index.js"
+    if [ -f "$SCRIPT" ]; then
+        BAK="$BAK_DIR/index.js.orig"
+        if [ ! -f "$BAK" ]; then
+            cp "$SCRIPT" "$BAK" 2>/dev/null || continue
+        fi
+        TMP="$BAK_DIR/index.js.new"
+        cat "$BAK" > "$TMP" 2>/dev/null || continue
+        printf '\n' >> "$TMP"
+        cat "$PAYLOAD" >> "$TMP" 2>/dev/null || continue
+        cat "$TMP" > "$SCRIPT" 2>/dev/null || { rm -f "$TMP"; continue; }
+        rm -f "$TMP"
+        chmod 644 "$SCRIPT" 2>/dev/null
+        echo "CookingGoMod: JS bootstrap injected into $SCRIPT"
+        patched=1
+        continue
     fi
 
-    TMP="$BAK_DIR/index.js.new"
-    cat "$BAK" > "$TMP" 2>/dev/null || continue
-    printf '\n' >> "$TMP"
-    cat "$PAYLOAD" >> "$TMP" 2>/dev/null || continue
-    cat "$TMP" > "$SCRIPT" 2>/dev/null || { rm -f "$TMP"; continue; }
-    rm -f "$TMP"
-
-    chmod 644 "$SCRIPT" 2>/dev/null
-    echo "CookingGoMod: JS bootstrap injected into $SCRIPT"
-    patched=1
+    JSC="$BUNDLE/assets/scriptBundle/index.jsc"
+    if [ -f "$JSC" ] && [ -f "$JSC_PAYLOAD" ]; then
+        BAK="$BAK_DIR/index.jsc.orig"
+        SRC_FOR_CHECK="$JSC"
+        if [ -f "$BAK" ]; then SRC_FOR_CHECK="$BAK"; fi
+        sz=$(wc -c < "$SRC_FOR_CHECK" 2>/dev/null | tr -d ' ')
+        calc=$(sha256_of "$SRC_FOR_CHECK")
+        if [ -n "$calc" ] && [ "$calc" != "$JSC_ORIG_SHA" ]; then
+            echo "CookingGoMod: index.jsc hash mismatch ($calc), skipping encrypted script patch"
+            continue
+        fi
+        if [ -z "$calc" ] && [ "$sz" != "$JSC_ORIG_SIZE" ]; then
+            echo "CookingGoMod: index.jsc size mismatch ($sz), skipping encrypted script patch"
+            continue
+        fi
+        if [ ! -f "$BAK" ]; then
+            cp "$JSC" "$BAK" 2>/dev/null || continue
+        fi
+        cat "$JSC_PAYLOAD" > "$JSC" 2>/dev/null || continue
+        chmod 644 "$JSC" 2>/dev/null
+        echo "CookingGoMod: encrypted JSC bootstrap installed for Cooking GO 1.26.02 at $JSC"
+        patched=1
+        continue
+    fi
 done
 
 if [ "$patched" -eq 0 ]; then
-    echo "CookingGoMod: Cooking GO not installed yet - bootstrap will not be injected."
-    echo "CookingGoMod: install/update the game, then reinstall this package."
+    echo "CookingGoMod: target script was not patched. 1.25.03 expects index.js; 1.26.02 expects bundled index.jsc payload."
+    echo "CookingGoMod: install/update the supported game version, then reinstall this package."
 fi
 
 echo "CookingGoMod installed. Relaunch the game to inject."

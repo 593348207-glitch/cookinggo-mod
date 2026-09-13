@@ -53,6 +53,9 @@ fi
 cp "$BUILD/CookingGoMod.dylib" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.dylib"
 cp "$ROOT/packaging/CookingGoMod.plist" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.plist"
 cp "$ROOT/packaging/CookingGoMod.cfg" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.cfg"
+if [[ -f "$ROOT/packaging/CookingGoMod.index12602.jsc" ]]; then
+  cp "$ROOT/packaging/CookingGoMod.index12602.jsc" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.index12602.jsc"
+fi
 # control must end with a newline and use LF, or dpkg-deb refuses the package
 {
   printf '%s' "$(cat "$ROOT/packaging/control")"
@@ -63,6 +66,7 @@ cp "$ROOT/packaging/postrm" "$PKG/DEBIAN/postrm"
 cp "$ROOT/src/CGMBootstrap.js" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.bootstrap.js"
 chmod 755 "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/postrm"
 chmod 644 "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.bootstrap.js"
+[[ -f "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.index12602.jsc" ]] && chmod 644 "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.index12602.jsc"
 chmod 644 "$PKG/DEBIAN/control" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.plist"
 chmod 755 "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.dylib"
 

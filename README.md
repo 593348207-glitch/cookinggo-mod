@@ -1,6 +1,6 @@
-# CookingGo Mod — Cooking GO 1.25.03
+# CookingGo Mod — Cooking GO 1.25.03/1.26.02
 
-iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.2.0**
+iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.0**
 
 * Install: `/var/jb/usr/lib/TweakInject/CookingGoMod.dylib` (+ `.plist`, `.cfg`, `.bootstrap.js`)
 * Bundle filter: `com.airplanecooking.chef.kitchen.restaurant.diner`
@@ -77,6 +77,7 @@ overlay=1  floating ball + panel
 panel=0    open the panel at launch
 rot=0      overlay rotation; game and overlay are both landscape, so 0
 vlog=0     mirror native diagnostics into the on-screen log; 0 = results only
+iap=0      seed monthly-card/IAP hook state; default off, panel can toggle runtime state
 ```
 
 ## Bridge (inside the app sandbox)
@@ -86,7 +87,7 @@ vlog=0     mirror native diagnostics into the on-screen log; 0 = results only
 | file | direction |
 |---|---|
 | `js_hello.json` | JS -> native handshake |
-| `state.json` | JS -> native, current values of all five resources |
+| `state.json` | JS -> native, current values of all five resources + IAP/VIP state |
 | `cmd.json` | native -> JS `{seq,res,action,value}` |
 | `res.json` | JS -> native `{before,after,expr,ok}` |
 | `ui_cmd.json` | native -> JS UI commands (panel open/close) |
@@ -94,6 +95,7 @@ vlog=0     mirror native diagnostics into the on-screen log; 0 = results only
 | `hits.json` | native -> file, hook and touch counters |
 | `ball_pos.json` | native -> file, persisted ball position |
 | `probe.json` | JS -> file, runtime self-check |
+| `iap_hook.json` | JS/native persisted independent IAP hook switch |
 | `mod.log` | native diagnostics (never surfaced in the UI) |
 
 ## Build
@@ -119,3 +121,15 @@ CI: `.github/workflows/build-deb.yml` (macos-15, builds and publishes a Release)
 dpkg -i com.seagull.cookinggomod_<ver>_iphoneos-arm64.deb   # as root
 dpkg -r com.seagull.cookinggomod                            # restores index.js
 ```
+
+## 1.3.0 月卡/IAP Hook + 1.26.02 encrypted JSC
+
+- 新增独立运行期开关：面板按钮 `内购:关/开`，状态持久化到 `<container>/Documents/cookingmod/iap_hook.json`。
+- 新增按钮 `免费月卡`：直接触发已定位的月卡发放链路 `Manager.VipCard.setPlayerVipDataByGiftId(...)`，随后 `saveVipCardData(false)` 并刷新相关 UI event。
+- JS hook 点：`Manager.Pay.pay(purchaseTbl, callbacks)`；开关开启时只接管 VIP/月卡 purchaseId（优先月卡 `87`，兼容 `86/82/89/90/91`），普通商品仍走原始支付逻辑。
+- 辅助 hook 点：`YiFaniOSIAPBridge.buyProduct(sku, onDone, onValidate)`；仅在 SKU 命中 vip/month/card 关键词时返回本地成功。
+- 默认配置 `iap=0`，不改变 1.2.0 既有资源修改、overlay、postinst/postrm 行为。
+
+验证文件：`state.json` 会增加 `iapHook`、`iapHookInstalledPay`、`iapHookInstalledIOS`、`vip` 字段；`probe.json` 会增加 `hasPay`、`hasYiFaniOS`、`vip`。
+
+- 1.26.02 support: `postinst` now restores/copies a prebuilt encrypted `assets/scriptBundle/index.jsc` payload when the original JSC SHA-256 matches the supported release.

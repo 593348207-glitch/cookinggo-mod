@@ -1,5 +1,5 @@
 #!/bin/sh
-# CookingGoMod - remove: restore the pristine game script.
+# CookingGoMod - remove: restore pristine game scripts.
 case "$1" in
     remove|purge|upgrade|disappear) ;;
     *) exit 0 ;;
@@ -15,6 +15,12 @@ for BUNDLE in /private/var/containers/Bundle/Application/*/"$APP_EXEC" \
     BAK="$BAK_DIR/index.js.orig"
     if [ -f "$SCRIPT" ] && [ -f "$BAK" ]; then
         cat "$BAK" > "$SCRIPT" 2>/dev/null && echo "CookingGoMod: restored $SCRIPT"
+    fi
+
+    JSC="$BUNDLE/assets/scriptBundle/index.jsc"
+    JSC_BAK="$BAK_DIR/index.jsc.orig"
+    if [ -f "$JSC" ] && [ -f "$JSC_BAK" ]; then
+        cat "$JSC_BAK" > "$JSC" 2>/dev/null && echo "CookingGoMod: restored $JSC"
     fi
 done
 

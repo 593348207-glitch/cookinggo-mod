@@ -1,6 +1,6 @@
 /* =========================================================================
  * CookingGo Mod - JS bootstrap payload
- * Target : Cooking GO 1.25.03 (Cocos Creator 2.4.11 + cocos2d-x lite + V8)
+ * Target : Cooking GO 1.25.03/1.26.02 (Cocos Creator 2.4.11 + cocos2d-x lite + V8)
  * Injected by CookingGoMod.dylib at the end of assets/scriptBundle/index.js
  * Evidence for access path (static analysis, 2026-09-12):
  *   window.__require            -> module table of scriptBundle/index.js (775 modules)
@@ -15,7 +15,7 @@
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
 ;(function () {
-  var VERSION = "1.2.0";
+  var VERSION = "1.3.0";
   var TAG = "[CookingMod]";
 
   function log(s) {
@@ -118,6 +118,238 @@
        57 = AdCoupon  -> PlayerData.adCouponNum      (免广告券)            */
   var EPropID_ClothNum = 45;
   var EPropID_AdCoupon = 57;
+  var IAP_STATE_FILE = "iap_hook.json";
+  var gIap = { enabled: false, installedPay: false, installedIOS: false, last: "init" };
+
+  function loadIapState() {
+    var st = readJson(DIR + IAP_STATE_FILE);
+    if (st && typeof st.enabled !== "undefined") { gIap.enabled = !!st.enabled; }
+    gIap.last = "loaded:" + (gIap.enabled ? "on" : "off");
+  }
+
+  function saveIapState() {
+    writeJson(DIR + IAP_STATE_FILE, {
+      enabled: !!gIap.enabled,
+      installedPay: !!gIap.installedPay,
+      installedIOS: !!gIap.installedIOS,
+      last: gIap.last,
+      ts: now(),
+      version: VERSION
+    });
+  }
+
+  function asId(v) {
+    var n = Number(v);
+    return isFinite(n) ? Math.floor(n) : 0;
+  }
+
+  function findVipGiftTbl() {
+    try {
+      var gt = G && G.Table && G.Table.giftTbl;
+      if (!Array.isArray(gt)) { return null; }
+      for (var i = 0; i < gt.length; i++) {
+        var g = gt[i];
+        if (!g || !Array.isArray(g.PurchaseId)) { continue; }
+        var ids = g.PurchaseId.map(asId);
+        if (ids.indexOf(87) >= 0 || ids.indexOf(90) >= 0 || ids.indexOf(86) >= 0) { return g; }
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function monthPurchaseId() {
+    var g = findVipGiftTbl();
+    if (g && Array.isArray(g.PurchaseId)) {
+      var ids = g.PurchaseId.map(asId).filter(function (x) { return x > 0; });
+      if (ids.indexOf(87) >= 0) { return 87; }
+      if (ids.length > 1) { return ids[1]; }
+      if (ids.indexOf(90) >= 0) { return 90; }
+      if (ids.length) { return ids[0]; }
+    }
+    return 87;
+  }
+
+  function findPurchaseTbl(id) {
+    try {
+      var pt = G && G.Table && G.Table.purchaseTbl;
+      if (!Array.isArray(pt)) { return null; }
+      for (var i = 0; i < pt.length; i++) if (asId(pt[i] && pt[i].ID) === asId(id)) return pt[i];
+    } catch (e) {}
+    return null;
+  }
+
+  function purchaseIdOf(p) {
+    if (!p) { return 0; }
+    return asId(p.ID || p.id || p.purchaseId || p.PurchaseId || p.productId);
+  }
+
+  function isVipPurchase(p) {
+    var id = purchaseIdOf(p);
+    var g = findVipGiftTbl();
+    if (g && Array.isArray(g.PurchaseId) && g.PurchaseId.map(asId).indexOf(id) >= 0) { return true; }
+    return [ 86, 87, 82, 89, 90, 91 ].indexOf(id) >= 0;
+  }
+
+  function isVipSku(sku) {
+    var s = String(sku || "").toLowerCase();
+    return /vip|month|monthly|card|87|90/.test(s);
+  }
+
+  function emitResourceUpdates() {
+    try { CORE.Event.emit(APP.EVENT_ID.UPDATE_GEM, PD.gemNum, true); } catch (e) {}
+    try { CORE.Event.emit(APP.EVENT_ID.UPDATE_POWER, PD.powerNum); } catch (e) {}
+    try { CORE.Event.emit(APP.EVENT_ID.UPDATE_AD_COUPON, PD.adCouponNum); } catch (e) {}
+    try { CORE.Event.emit(APP.EVENT_ID.UPDATE_PROP_NUM, EPropID_AdCoupon, PD.adCouponNum); } catch (e) {}
+    try { CORE.Event.emit(APP.EVENT_ID.UPDATE_GIFT_MENU_NUM); } catch (e) {}
+  }
+
+  function findRewardTbl(id) {
+    try {
+      var rt = G && G.Table && G.Table.rewardTbl;
+      if (!Array.isArray(rt)) { return null; }
+      for (var i = 0; i < rt.length; i++) if (asId(rt[i] && rt[i].ID) === asId(id)) return rt[i];
+    } catch (e) {}
+    return null;
+  }
+
+  function applyRewardById(rewardId) {
+    var tbl = findRewardTbl(rewardId);
+    if (!tbl) { return false; }
+    try {
+      if (G.Reward && typeof G.Reward.getReward === "function") {
+        G.Reward.getReward(tbl, false, [ 8, 8, 8 ]);
+        if (typeof G.Reward.updateRewardDisplay === "function") { G.Reward.updateRewardDisplay(tbl); }
+        return true;
+      }
+    } catch (e) { log("Reward.getReward failed: " + str(e)); }
+    return false;
+  }
+
+  function vipSummary() {
+    var v = null;
+    try { v = G && G.VipCard; } catch (e) { v = null; }
+    var d = null;
+    try { d = v && v.vipCardData; } catch (e) { d = null; }
+    return {
+      active: !!(v && v.isVipEffectTime),
+      type: d && typeof d.type !== "undefined" ? d.type : null,
+      beginT: d && d.beginT || 0,
+      endT: v && v.vipEndTimes || (d && d.endT) || 0,
+      leftSeconds: v ? Math.floor(Number(v.getVipLeftTime ? v.getVipLeftTime() : 0)) : 0,
+      payDataCount: d && Array.isArray(d.payData) ? d.payData.length : 0,
+      hasGetDayNames: d && Array.isArray(d.hasGetDayNames) ? d.hasGetDayNames.length : 0
+    };
+  }
+
+  function grantVipCardDirect() {
+    var out = { ok: false, res: "vip_card", action: "buy", input: 30, before: null, after: null, ts: now(), version: VERSION };
+    if (!bind()) { out.error = "engine not bound: " + gBindWhy; return out; }
+    installIapHook();
+    out.before = vipSummary();
+    try {
+      var vip = G.VipCard;
+      if (!vip || typeof vip.setPlayerVipDataByGiftId !== "function") { throw new Error("Manager.VipCard.setPlayerVipDataByGiftId missing"); }
+      var candidates = [];
+      var mid = monthPurchaseId();
+      candidates.push(mid, 87, 90, 86, 89, 91, 82);
+      var used = 0;
+      for (var i = 0; i < candidates.length; i++) {
+        var id = asId(candidates[i]);
+        if (!id || candidates.indexOf(id) !== i) { continue; }
+        try {
+          vip.setPlayerVipDataByGiftId(id, true);
+          used = id;
+          if (vip.isVipEffectTime) { break; }
+        } catch (x) {}
+      }
+      if (!vip.isVipEffectTime) { throw new Error("vip state still inactive after setPlayerVipDataByGiftId"); }
+      try { if (G.ServerData && G.ServerData.saveVipCardData) G.ServerData.saveVipCardData(false); } catch (e) {}
+      out.purchaseId = used || mid;
+      out.purchaseTbl = findPurchaseTbl(used || mid);
+      var rewardId = 0;
+      try { rewardId = asId(out.purchaseTbl && out.purchaseTbl.RewardID); } catch (e) { rewardId = 0; }
+      if (!rewardId) {
+        var gift = findVipGiftTbl();
+        if (gift && Array.isArray(gift.PurchaseId) && Array.isArray(gift.RewardIds)) {
+          var gi = gift.PurchaseId.map(asId).indexOf(asId(out.purchaseId));
+          if (gi >= 0) { rewardId = asId(gift.RewardIds[gi]); }
+        }
+      }
+      out.rewardId = rewardId;
+      out.rewardApplied = rewardId ? applyRewardById(rewardId) : false;
+      emitResourceUpdates();
+      out.ok = true;
+      out.after = vipSummary();
+      out.expr = "grant monthly vip-card purchaseId=" + out.purchaseId + " rewardId=" + rewardId;
+      out.message = "月卡发放完成: purchaseId=" + out.purchaseId + " rewardId=" + rewardId + " rewardApplied=" + (out.rewardApplied ? 1 : 0) + " endT=" + out.after.endT + " leftSeconds=" + out.after.leftSeconds;
+      gIap.last = out.message;
+      saveIapState();
+    } catch (e) {
+      out.error = str(e);
+      gIap.last = "grant failed: " + out.error;
+      saveIapState();
+    }
+    return out;
+  }
+
+  function installIapHook() {
+    if (!G) { return false; }
+    try {
+      var pay = G.Pay;
+      if (pay && typeof pay.pay === "function" && !pay.__cookingModIapHook) {
+        var origPay = pay.pay;
+        pay.__cookingModIapHookOriginal = origPay;
+        pay.__cookingModIapHook = true;
+        pay.pay = function (purchaseTbl, cb) {
+          try {
+            if (gIap.enabled && isVipPurchase(purchaseTbl)) {
+              var pid = purchaseIdOf(purchaseTbl) || monthPurchaseId();
+              gIap.last = "Pay.pay intercepted purchaseId=" + pid;
+              saveIapState();
+              setTimeout(function () {
+                try { cb && typeof cb.OnSuccess === "function" && cb.OnSuccess({ cookingMod: true, orderId: "cgm_vip_" + now(), purchaseId: pid }); }
+                catch (x) { log("fake OnSuccess error: " + str(x)); }
+              }, 0);
+              return Promise.resolve({ cookingMod: true, code: 200, status: 1, purchaseId: pid });
+            }
+          } catch (e) { log("Pay.pay hook error: " + str(e)); }
+          return origPay.apply(this, arguments);
+        };
+        gIap.installedPay = true;
+        log("IAP hook installed on Manager.Pay.pay");
+      }
+    } catch (e) { log("install Pay hook failed: " + str(e)); }
+
+    try {
+      var iosMod = req("YiFaniOSIAPBridge");
+      var ios = iosMod && iosMod.default;
+      if (ios && typeof ios.buyProduct === "function" && !ios.__cookingModIapHook) {
+        var origIOSBuy = ios.buyProduct;
+        ios.__cookingModIapHookOriginal = origIOSBuy;
+        ios.__cookingModIapHook = true;
+        ios.buyProduct = function (sku, onDone, onValidate) {
+          try {
+            if (gIap.enabled && isVipSku(sku)) {
+              gIap.last = "YiFaniOSIAPBridge.buyProduct intercepted sku=" + sku;
+              saveIapState();
+              var ret = { cookingMod: true, status: "success", code: 0, productId: sku, transactionId: "cgm_tx_" + now() };
+              setTimeout(function () {
+                try { typeof onDone === "function" && onDone(ret); } catch (x) {}
+                try { typeof onValidate === "function" && onValidate(ret); } catch (x) {}
+              }, 0);
+              return Promise.resolve(ret);
+            }
+          } catch (e) { log("iOS bridge hook error: " + str(e)); }
+          return origIOSBuy.apply(this, arguments);
+        };
+        gIap.installedIOS = true;
+        log("IAP hook installed on YiFaniOSIAPBridge.buyProduct");
+      }
+    } catch (e) {}
+    return !!(gIap.installedPay || gIap.installedIOS);
+  }
+
+  loadIapState();
 
   function table() {
     var E = APP.EVENT_ID;
@@ -173,10 +405,16 @@
 
   function snapshot() {
     if (!bind()) { return null; }
+    installIapHook();
     var t = table(), out = { ready: true, ts: now(), version: VERSION, why: gBindWhy };
     for (var k in t) {
       try { out[k] = Number(t[k].get()); } catch (e) { out[k] = null; out[k + "_err"] = str(e); }
     }
+    out.iapHook = gIap.enabled ? 1 : 0;
+    out.iapHookInstalledPay = gIap.installedPay ? 1 : 0;
+    out.iapHookInstalledIOS = gIap.installedIOS ? 1 : 0;
+    out.iapLast = gIap.last;
+    try { out.vip = vipSummary(); } catch (e) { out.vip_err = str(e); }
     return out;
   }
 
@@ -191,6 +429,23 @@
 
   function execute(cmd) {
     var res = { seq: cmd.seq, res: cmd.res, action: cmd.action, input: cmd.value, ts: now(), version: VERSION };
+    if (cmd.res === "iap_hook") {
+      gIap.enabled = (cmd.action === "on") || (cmd.action === "toggle" ? !!cmd.value : !!cmd.value);
+      if (bind()) { installIapHook(); }
+      gIap.last = "toggle:" + (gIap.enabled ? "on" : "off");
+      saveIapState();
+      res.ok = true;
+      res.before = gIap.enabled ? 0 : 1;
+      res.after = gIap.enabled ? 1 : 0;
+      res.expr = "iap_hook=" + (gIap.enabled ? "on" : "off");
+      res.message = "内购钩子已" + (gIap.enabled ? "开启" : "关闭") + " (Pay=" + (gIap.installedPay ? 1 : 0) + ", iOS=" + (gIap.installedIOS ? 1 : 0) + ")";
+      return res;
+    }
+    if (cmd.res === "vip_card") {
+      var vr = grantVipCardDirect();
+      vr.seq = cmd.seq;
+      return vr;
+    }
     if (!bind()) { res.ok = false; res.error = "engine not bound (PlayerData not ready)"; return res; }
     var t = table(), item = t[cmd.res];
     if (!item) { res.ok = false; res.error = "unknown resource: " + cmd.res; return res; }
@@ -242,6 +497,9 @@
     try { out.eventIdCount = Object.keys(req("AppConst").EVENT_ID).length; } catch (e) { out.eventIdErr = str(e); }
     try { out.coreEvent = !!(req("Core").default.Event); } catch (e) { out.coreErr = str(e); }
     try { out.playerInfoKeys = Object.keys(PD.playerInfo).length; } catch (e) { out.playerInfoErr = str(e); }
+    try { out.hasPay = !!(req("Manager").default.Pay && req("Manager").default.Pay.pay); } catch (e) { out.payErr = str(e); }
+    try { var ios = req("YiFaniOSIAPBridge"); out.hasYiFaniOS = !!(ios && ios.default && ios.default.buyProduct); } catch (e) { out.iosIapErr = str(e); }
+    try { out.vip = vipSummary(); } catch (e) { out.vipErr = str(e); }
     out.state = snapshot();
     writeJson(DIR + "probe.json", out);
   }
@@ -254,6 +512,7 @@
     ticks++;
     try {
       if (bind()) {
+        installIapHook();
         var st = snapshot();
         if (st) { writeJson(DIR + "state.json", st); }
         var cmd = readJson(DIR + "cmd.json");

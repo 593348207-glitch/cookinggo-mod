@@ -1,5 +1,5 @@
 /* =============================================================================
- *  CookingGoMod - rootless tweak for Cooking GO 1.25.03
+ *  CookingGoMod - rootless tweak for Cooking GO 1.25.03/1.26.02
  *  iOS 16.x / arm64 / Dopamine (ElleKit) / /var/jb/usr/lib/TweakInject/
  *
  *  Static-analysis evidence this file relies on (2026-09-12):
@@ -37,7 +37,7 @@
 #import "CGMBootstrap.generated.h"
 
 #ifndef CGM_VERSION
-#define CGM_VERSION @"1.0.0"
+#define CGM_VERSION @"1.3.0"
 #endif
 
 static NSString * const kCGMTargetBundle = @"com.airplanecooking.chef.kitchen.restaurant.diner";
@@ -101,6 +101,7 @@ static int gCfgOverlay = 1;   /* floating panel UI                              
 static int gCfgPanelOpen = 0; /* open the panel at launch (layout diagnostics)   */
 static int gCfgRot = 0;      /* rotate the overlay to match the game's drawing  */
 static int gCfgVerboseLogCfg = 0;
+static int gCfgIAPHook = 0;  /* seed the JS IAP/month-card hook state; default off */
 
 static void CGMApplyConfigLine(const char *line) {
     if (!line) { return; }
@@ -121,6 +122,7 @@ static void CGMApplyConfigLine(const char *line) {
     else if (strcmp(key, "panel") == 0) { gCfgPanelOpen = val; }
     else if (strcmp(key, "rot") == 0) { gCfgRot = atoi(eq + 1); }
     else if (strcmp(key, "vlog") == 0) { gCfgVerboseLogCfg = val; }
+    else if (strcmp(key, "iap") == 0) { gCfgIAPHook = val; }
 }
 
 static void CGMReadConfigFile(const char *path) {
@@ -141,8 +143,8 @@ static void CGMReadConfig(void) {
         CGMReadConfigFile(p.fileSystemRepresentation);
     }
     gCfgVerboseLog = gCfgVerboseLogCfg;
-    CGMLog(@"config: objc=%d posix=%d overlay=%d panel=%d rot=%d vlog=%d",
-           gCfgObjc, gCfgPosix, gCfgOverlay, gCfgPanelOpen, gCfgRot, gCfgVerboseLog);
+    CGMLog(@"config: objc=%d posix=%d overlay=%d panel=%d rot=%d vlog=%d iap=%d",
+           gCfgObjc, gCfgPosix, gCfgOverlay, gCfgPanelOpen, gCfgRot, gCfgVerboseLog, gCfgIAPHook);
 }
 
 /* ============================== write helpers ============================= */
@@ -200,6 +202,13 @@ static void CGMEnsureMailbox(void) {
     gMailboxPath = [home stringByAppendingPathComponent:
                         [@"Documents" stringByAppendingPathComponent:kCGMMailboxName]];
     chmod(gMailboxPath.fileSystemRepresentation, 0777);
+    if (gCfgIAPHook) {
+        NSString *iap = [gMailboxPath stringByAppendingPathComponent:@"iap_hook.json"];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:iap]) {
+            CGMWriteJSON(@{ @"enabled": @YES, @"seed": @"cfg", @"version": CGM_VERSION,
+                            @"ts": @((long long)[[NSDate date] timeIntervalSince1970]) }, iap);
+        }
+    }
     CGMLog(@"mailbox ready at %@", gMailboxPath);
 }
 
@@ -639,6 +648,8 @@ static const int kCGMResCount = 5;
 @property (nonatomic, strong) UIButton *addButton;
 @property (nonatomic, strong) UIButton *setButton;
 @property (nonatomic, strong) UIButton *probeButton;
+@property (nonatomic, strong) UIButton *iapToggleButton;
+@property (nonatomic, strong) UIButton *vipCardButton;
 @property (nonatomic, strong) UITextView *logView;
 @property (nonatomic, assign) BOOL panelVisible;
 @property (nonatomic, assign) CGPoint ballCenter;
@@ -656,6 +667,7 @@ static const int kCGMResCount = 5;
 - (void)snapBallToNearestEdge;
 - (void)applyDefaultBallIfNeeded;
 - (void)refreshStatus;
+- (void)updateIAPControls;
 @end
 
 @implementation CGMViewController
@@ -680,7 +692,7 @@ static const int kCGMResCount = 5;
 
     __weak typeof(self) weakSelf = self;
     gLogSink = ^(NSString *line) { [weakSelf appendLog:line]; };
-    [self appendLog:[NSString stringWithFormat:@"CookingGoMod v%@ | 选资源 → 输数字 → + 或 =", CGM_VERSION]];
+    [self appendLog:[NSString stringWithFormat:@"CookingGoMod v%@ | 资源修改 + 月卡/IAP Hook", CGM_VERSION]];
 }
 
 - (void)dealloc {
@@ -847,7 +859,7 @@ static const int kCGMResCount = 5;
 }
 
 - (void)buildPanel {
-    self.panel = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 430)];
+    self.panel = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 470)];
     self.panel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.94];
     self.panel.layer.cornerRadius = 14.0;
     self.panel.layer.borderWidth = 1.0;
@@ -914,6 +926,14 @@ static const int kCGMResCount = 5;
     self.probeButton = [self makeButton:@"自检" color:[UIColor colorWithWhite:0.35 alpha:1.0] action:@selector(probeTapped)];
     self.probeButton.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
     [self.panel addSubview:self.probeButton];
+
+    self.iapToggleButton = [self makeButton:@"内购:关" color:[UIColor colorWithRed:0.85 green:0.42 blue:0.12 alpha:1.0] action:@selector(iapToggleTapped)];
+    self.iapToggleButton.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
+    [self.panel addSubview:self.iapToggleButton];
+
+    self.vipCardButton = [self makeButton:@"免费月卡" color:[UIColor colorWithRed:0.55 green:0.25 blue:0.88 alpha:1.0] action:@selector(vipCardTapped)];
+    self.vipCardButton.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
+    [self.panel addSubview:self.vipCardButton];
 
     /* Deliberately NOT added to the panel: the status line under 自检 is hidden.
        Live state is still available in mod.log and ui_state.json. */
@@ -1005,7 +1025,7 @@ static const int kCGMResCount = 5;
     }
 
     CGFloat panelW = MIN(340.0, safe.size.width - 16.0);
-    CGFloat panelH = MIN(430.0, safe.size.height - 16.0);
+    CGFloat panelH = MIN(470.0, safe.size.height - 16.0);
     CGFloat headerH = 34.0;
     CGFloat pad = 10.0;
     CGFloat inputH = 40.0;
@@ -1036,6 +1056,8 @@ static const int kCGMResCount = 5;
     y += inputH + 8.0;
 
     self.probeButton.frame = CGRectMake(pad, y, 60.0, 24.0);
+    self.iapToggleButton.frame = CGRectMake(CGRectGetMaxX(self.probeButton.frame) + 6.0, y, 96.0, 24.0);
+    self.vipCardButton.frame = CGRectMake(CGRectGetMaxX(self.iapToggleButton.frame) + 6.0, y, 96.0, 24.0);
     y += 24.0 + 8.0;
 
     CGFloat logH = panelH - y - pad;
@@ -1060,6 +1082,23 @@ static const int kCGMResCount = 5;
     } else {
         self.currentLabel.text = [NSString stringWithFormat:@"%@ 当前: --", kCGMResNames[seg]];
     }
+    [self updateIAPControls];
+}
+
+- (void)updateIAPControls {
+    id on = gEngineState[@"iapHook"];
+    BOOL enabled = [on isKindOfClass:[NSNumber class]] ? [on boolValue] : (gCfgIAPHook != 0);
+    [self.iapToggleButton setTitle:(enabled ? @"内购:开" : @"内购:关") forState:UIControlStateNormal];
+    self.iapToggleButton.backgroundColor = enabled
+        ? [UIColor colorWithRed:0.10 green:0.62 blue:0.28 alpha:1.0]
+        : [UIColor colorWithRed:0.85 green:0.42 blue:0.12 alpha:1.0];
+    id vip = gEngineState[@"vip"];
+    BOOL active = NO;
+    if ([vip isKindOfClass:[NSDictionary class]]) {
+        id a = ((NSDictionary *)vip)[@"active"];
+        active = [a isKindOfClass:[NSNumber class]] ? [a boolValue] : NO;
+    }
+    [self.vipCardButton setTitle:(active ? @"月卡续期" : @"免费月卡") forState:UIControlStateNormal];
 }
 
 - (void)resourceChanged { [self refreshStatus]; }
@@ -1100,6 +1139,8 @@ static const int kCGMResCount = 5;
                      @"w": @(self.panel.frame.size.width), @"h": @(self.panel.frame.size.height) },
         @"input": @{ @"x": @(self.input.frame.origin.x), @"y": @(self.input.frame.origin.y),
                      @"w": @(self.input.frame.size.width), @"h": @(self.input.frame.size.height) },
+        @"iapHook": (gEngineState[@"iapHook"] ?: @(gCfgIAPHook)),
+        @"vip": (gEngineState[@"vip"] ?: @{}),
         @"ts": @((long long)[[NSDate date] timeIntervalSince1970])
     };
     CGMWriteJSON(d, [gMailboxPath stringByAppendingPathComponent:@"ui_state.json"]);
@@ -1182,6 +1223,20 @@ static const int kCGMResCount = 5;
 - (void)probeTapped {
     [self appendLog:@"→ 触发 JS 运行时自检 (probe.json)"];
     CGMRequestProbe();
+}
+
+- (void)iapToggleTapped {
+    id on = gEngineState[@"iapHook"];
+    BOOL enabled = [on isKindOfClass:[NSNumber class]] ? [on boolValue] : (gCfgIAPHook != 0);
+    BOOL next = !enabled;
+    [self appendLog:[NSString stringWithFormat:@"→ %@内购钩子（只接管 VIP/月卡购买）", next ? @"开启" : @"关闭"]];
+    CGMSendCommand(@"iap_hook", @"toggle", next ? 1 : 0);
+    [self updateIAPControls];
+}
+
+- (void)vipCardTapped {
+    [self appendLog:@"→ 直接触发月卡发放链路 setPlayerVipDataByGiftId + saveVipCardData"];
+    CGMSendCommand(@"vip_card", @"buy", 30);
 }
 
 - (void)keyboardChanged:(NSNotification *)n {
@@ -1272,9 +1327,13 @@ static void CGMTick(void) {
                 NSString *key = res[@"res"] ?: @"?";
                 if (ok) {
                     [gVC appendLog:[NSString stringWithFormat:@"← JS 回执 #%ld", (long)seq]];
-                    [gVC appendLog:[NSString stringWithFormat:@"  修改前: %@", res[@"before"] ?: @"?"]];
-                    [gVC appendLog:[NSString stringWithFormat:@"  输入表达: %@", res[@"expr"] ?: @""]];
-                    [gVC appendLog:[NSString stringWithFormat:@"  修改后: %@", res[@"after"] ?: @"?"]];
+                    if ([res[@"message"] isKindOfClass:[NSString class]]) {
+                        [gVC appendLog:[NSString stringWithFormat:@"  %@", res[@"message"]]];
+                    } else {
+                        [gVC appendLog:[NSString stringWithFormat:@"  修改前: %@", res[@"before"] ?: @"?"]];
+                        [gVC appendLog:[NSString stringWithFormat:@"  输入表达: %@", res[@"expr"] ?: @""]];
+                        [gVC appendLog:[NSString stringWithFormat:@"  修改后: %@", res[@"after"] ?: @"?"]];
+                    }
                     id after = res[@"after"];
                     id stv = gEngineState[key];
                     if ([stv isKindOfClass:[NSNumber class]] && [after isKindOfClass:[NSNumber class]]) {
@@ -1282,6 +1341,7 @@ static void CGMTick(void) {
                             ? @"  复核: state.json 一致 ✔"
                             : @"  复核: state.json 不一致 ✘"];
                     }
+                    [gVC updateIAPControls];
                 } else {
                     [gVC appendLog:[NSString stringWithFormat:@"← JS 回执 #%ld 失败: %@",
                                     (long)seq, res[@"error"] ?: @"unknown"]];
