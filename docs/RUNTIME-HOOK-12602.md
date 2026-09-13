@@ -69,6 +69,65 @@ _inflateEnd
 
 No clean exported `se::ScriptEngine::evalString` symbol is available from the regular symbol table, so the next static reverse step is xref-based location from the strings above.
 
+
+## Static xref coordinates
+
+Use the xref helper:
+
+```powershell
+python F:\测试\cookingGO\github-cookinggo-mod\tools\macho_string_xrefs.py `
+  --ipa "F:\测试\cookingGO\Cooking Go_1.26.02.ipa" `
+  --pattern "ScriptEngine::evalString" `
+  --limit 5
+```
+
+Current result for the 1.26.02 main binary:
+
+```text
+String VA 0x1028a6d85 file 0x28a6d85: ScriptEngine::evalString catch exception:
+String VA 0x1028a6db0 file 0x28a6db0: ScriptEngine::evalString script %s, failed!
+
+Xref 0x101c28cf0 file 0x1c28cf0 func=0x101c28a48 -> 0x1028a6d85
+Xref 0x101c28d3c file 0x1c28d3c func=0x101c28a48 -> 0x1028a6db0
+```
+
+Static inferred function:
+
+```text
+candidate_evalString_function_va = 0x101c28a48
+candidate_evalString_function_file_offset = 0x1c28a48
+preferred_image_base = 0x100000000
+candidate_runtime_offset_from_image_base = 0x1c28a48
+```
+
+Runtime address formula when the main image is loaded:
+
+```c
+uintptr_t evalString = (uintptr_t)main_mach_header + 0x1c28a48;
+```
+
+or equivalently:
+
+```c
+uintptr_t evalString = 0x101c28a48 + _dyld_get_image_vmaddr_slide(main_image_index);
+```
+
+The xref scanner also resolves FileUtils wrapper coordinates:
+
+```text
+js_engine_FileUtils_getStringFromFile string VA 0x102898087
+xrefs around 0x101baec10..0x101baed98
+
+js_engine_FileUtils_getDataFromFile string VA 0x1028980cc
+xrefs around 0x101baf1ec..0x101baf36c
+
+binding registration strings:
+getStringFromFile xref 0x101bb5b74
+getDataFromFile   xref 0x101bb5ba4
+```
+
+IDA/r2 follow-up should start at `0x101c28a48` and recover the exact C++ ABI from callers before enabling a live hook.
+
 ## Candidate hook levels
 
 ### Level A — JSB FileUtils binding
