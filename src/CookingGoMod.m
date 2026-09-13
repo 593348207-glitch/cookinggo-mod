@@ -620,6 +620,7 @@ static const int kCGMResCount = 5;
 - (void)placeBall:(CGPoint)c;
 - (void)persistBallPosition;
 - (void)restoreBallPosition;
+- (void)snapBallToNearestEdge;
 - (void)refreshStatus;
 @end
 
@@ -664,12 +665,11 @@ static const int kCGMResCount = 5;
     self.ball.titleLabel.font = [UIFont boldSystemFontOfSize:15.0];
     [self.ball setTitle:@"CG" forState:UIControlStateNormal];
     [self.ball addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragBall:)];
-    [self.ball addGestureRecognizer:pan];
-
-    /* UIControl's own drag tracking is far more dependable than a pan
-       recognizer on a button, and it reports through the same responder path
-       as the taps that already worked on device. */
+    /* Only UIControl tracking drives the ball. A UIPanGestureRecognizer was
+       attached as well in 1.0.9 and both paths moved the ball at once; the pan
+       path works in view space and needed a manual rotation, so the two fought
+       each other and the ball travelled backwards on the rotated stage.
+       UIControl reports in stage space already, so it is correct on its own. */
     [self.ball addTarget:self action:@selector(ballTouchDown:withEvent:) forControlEvents:UIControlEventTouchDown];
     [self.ball addTarget:self action:@selector(ballTouchMoved:withEvent:)
         forControlEvents:(UIControlEventTouchDragInside | UIControlEventTouchDragOutside |
@@ -703,11 +703,33 @@ static const int kCGMResCount = 5;
 
 - (void)ballTouchUp:(UIButton *)b withEvent:(UIEvent *)e {
     if (self.ballDragMoved) {
-        CGMLog(@"drag end -> ball=%.0f,%.0f", b.center.x, b.center.y);
-        [self persistBallPosition];
-        [self writeUIState];
+        [self snapBallToNearestEdge];
     }
     self.ballDragMoved = NO;
+}
+
+/* Drag is free, release snaps the ball to whichever side it is closer to.
+   The vertical position is kept, so it stays wherever it was put. */
+- (void)snapBallToNearestEdge {
+    CGRect safe = [self safeFrame];
+    CGFloat r = self.ball.bounds.size.width / 2.0;
+    CGFloat margin = 6.0;
+    CGFloat leftX  = CGRectGetMinX(safe) + r + margin;
+    CGFloat rightX = CGRectGetMaxX(safe) - r - margin;
+    CGFloat targetX = (fabs(self.ball.center.x - leftX) <= fabs(self.ball.center.x - rightX)) ? leftX : rightX;
+    CGPoint c = CGPointMake(targetX, self.ball.center.y);
+    c.y = MAX(CGRectGetMinY(safe) + r + margin, MIN(CGRectGetMaxY(safe) - r - margin, c.y));
+    CGMLog(@"snap ball -> %.0f,%.0f", c.x, c.y);
+    self.ballCenter = c;
+    [UIView animateWithDuration:0.22
+                          delay:0
+                        options:(UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut)
+                     animations:^{
+        self.ball.center = c;
+    } completion:^(BOOL finished) {
+        [self persistBallPosition];
+        [self writeUIState];
+    }];
 }
 
 - (void)placeBall:(CGPoint)c {
@@ -732,7 +754,8 @@ static const int kCGMResCount = 5;
     id x = d[@"x"], y = d[@"y"];
     if (![x isKindOfClass:[NSNumber class]] || ![y isKindOfClass:[NSNumber class]]) { return; }
     [self placeBall:CGPointMake([x doubleValue], [y doubleValue])];
-    CGMLog(@"restored ball position %.0f,%.0f", [x doubleValue], [y doubleValue]);
+    [self snapBallToNearestEdge];
+    CGMLog(@"restored ball position %.0f,%.0f", self.ball.center.x, self.ball.center.y);
 }
 
 - (UILabel *)makeLabel:(NSString *)text size:(CGFloat)size bold:(BOOL)bold color:(UIColor *)color {
@@ -783,7 +806,8 @@ static const int kCGMResCount = 5;
         for (int i = 0; i < kCGMResCount; i++) { [titles addObject:kCGMResNames[i]]; }
         self.resSeg = [[UISegmentedControl alloc] initWithItems:titles];
         if (@available(iOS 13.0, *)) { self.resSeg.apportionsSegmentWidthsByContent = NO; }
-        self.resSeg.titleTextAttributes = @{ NSFontAttributeName: [UIFont boldSystemFontOfSize:12.0] };
+        [self.resSeg setTitleTextAttributes:@{ NSFontAttributeName: [UIFont boldSystemFontOfSize:12.0] }
+                                   forState:UIControlStateNormal];
     }
     self.resSeg.selectedSegmentIndex = 0;
     if (@available(iOS 13.0, *)) {
@@ -878,7 +902,9 @@ static const int kCGMResCount = 5;
 
     if (!self.didInitPositions) {
         self.didInitPositions = YES;
-        self.ballCenter = CGPointMake(CGRectGetMaxX(safe) - 40.0, CGRectGetMidY(safe) - 40.0);
+        /* Default: snapped to the left edge, vertically centred - the game
+           keeps its own buttons on the right side of the layout. */
+        self.ballCenter = CGPointMake(CGRectGetMinX(safe) + 33.0, CGRectGetMidY(safe));
         self.panelCenter = CGPointMake(CGRectGetMidX(safe), CGRectGetMidY(safe));
         [self restoreBallPosition];
     }
@@ -984,24 +1010,14 @@ static const int kCGMResCount = 5;
     CGMWriteJSON(d, [gMailboxPath stringByAppendingPathComponent:@"ui_state.json"]);
 }
 
-- (void)dragBall:(UIPanGestureRecognizer *)g {
-    /* translation arrives in view space; the ball lives in the (possibly
-       rotated) stage, so rotate the delta into stage space first. */
-    CGPoint t = [g translationInView:self.view];
-    if (gCfgRot == 90)       { CGPoint r90 = CGPointMake(-t.y,  t.x); t = r90; }
-    else if (gCfgRot == 180) { CGPoint r180 = CGPointMake(-t.x, -t.y); t = r180; }
-    else if (gCfgRot == 270 || gCfgRot == -90) { CGPoint r270 = CGPointMake(t.y, -t.x); t = r270; }
-    [g setTranslation:CGPointZero inView:self.view];
-    CGPoint c = CGPointMake(self.ball.center.x + t.x, self.ball.center.y + t.y);
-    self.ballDragMoved = YES;
-    [self placeBall:c];
-}
-
 - (void)dragPanel:(UIPanGestureRecognizer *)g {
-    CGPoint t = [g translationInView:self.view];
+    /* Translation must be read in the same space the panel is positioned in.
+       Using self.view here made the panel travel backwards on the rotated
+       stage, exactly like the ball did before 1.1.1. */
+    CGPoint t = [g translationInView:self.stage];
     CGPoint c = self.panel.center;
     c.x += t.x; c.y += t.y;
-    [g setTranslation:CGPointZero inView:self.view];
+    [g setTranslation:CGPointZero inView:self.stage];
     CGRect safe = [self safeFrame];
     CGFloat hw = self.panel.bounds.size.width / 2.0;
     CGFloat hh = self.panel.bounds.size.height / 2.0;
