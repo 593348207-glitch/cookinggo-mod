@@ -640,6 +640,7 @@ static const int kCGMResCount = 5;
 - (void)persistBallPosition;
 - (void)restoreBallPosition;
 - (void)snapBallToNearestEdge;
+- (void)applyDefaultBallIfNeeded;
 - (void)refreshStatus;
 @end
 
@@ -767,8 +768,33 @@ static const int kCGMResCount = 5;
     self.ballCenter = clamped;
 }
 
+/* Re-applying the default on every layout while no stored position exists is
+   deliberate: the first layout pass can run before the window geometry settles,
+   which left the ball parked in the wrong place in 1.1.5. It is idempotent, and
+   as soon as the operator drags the ball the stored file takes over. */
+- (void)applyDefaultBallIfNeeded {
+    if (!gMailboxPath) { return; }
+    static BOOL hasStored = NO;
+    static BOOL checkedOnce = NO;
+    if (!checkedOnce) {
+        checkedOnce = YES;
+        hasStored = [[NSFileManager defaultManager]
+                     fileExistsAtPath:[gMailboxPath stringByAppendingPathComponent:@"ball_pos.json"]];
+        CGMLog(@"ball position store present=%d", hasStored);
+    }
+    if (hasStored) { return; }
+    CGRect sv = [self safeViewFrame];
+    if (sv.size.width < 20 || sv.size.height < 20) { return; }
+    CGFloat vr = 27.0 + 6.0;
+    CGPoint want = CGPointMake(CGRectGetMinX(sv) + vr, CGRectGetMidY(sv));
+    [self placeBall:[self stagePointForViewPoint:want]];
+}
+
 - (void)persistBallPosition {
     if (!gMailboxPath) { return; }
+    CGMLog(@"ball position stored at view %.0f,%.0f",
+           [self viewPointForStagePoint:self.ball.center].x,
+           [self viewPointForStagePoint:self.ball.center].y);
     CGMWriteJSON(@{ @"x": @(self.ball.center.x), @"y": @(self.ball.center.y) },
                  [gMailboxPath stringByAppendingPathComponent:@"ball_pos.json"]);
 }
@@ -781,7 +807,9 @@ static const int kCGMResCount = 5;
     if (![x isKindOfClass:[NSNumber class]] || ![y isKindOfClass:[NSNumber class]]) { return; }
     [self placeBall:CGPointMake([x doubleValue], [y doubleValue])];
     [self snapBallToNearestEdge];
-    CGMLog(@"restored ball position %.0f,%.0f", self.ball.center.x, self.ball.center.y);
+    CGMLog(@"restored ball position -> view %.0f,%.0f",
+           [self viewPointForStagePoint:self.ball.center].x,
+           [self viewPointForStagePoint:self.ball.center].y);
 }
 
 - (UILabel *)makeLabel:(NSString *)text size:(CGFloat)size bold:(BOOL)bold color:(UIColor *)color {
@@ -957,15 +985,6 @@ static const int kCGMResCount = 5;
 
     if (!self.didInitPositions) {
         self.didInitPositions = YES;
-        /* Default: the edge the operator sees on their left, vertically
-           centred. Stated in view space and converted, so it is correct for any
-           rot value without reasoning about which stage axis maps where. */
-        CGRect sv = [self safeViewFrame];
-        CGFloat vr = 27.0 + 6.0;
-        CGPoint want = CGPointMake(CGRectGetMinX(sv) + vr, CGRectGetMidY(sv));
-        CGPoint sp = [self stagePointForViewPoint:want];
-        CGMLog(@"default ball: view %.0f,%.0f -> stage %.0f,%.0f", want.x, want.y, sp.x, sp.y);
-        [self placeBall:sp];
         self.panelCenter = CGPointMake(CGRectGetMidX(safe), CGRectGetMidY(safe));
         [self restoreBallPosition];
     }
@@ -982,6 +1001,7 @@ static const int kCGMResCount = 5;
     self.panel.frame = pf;
     self.panel.center = CGPointMake(self.panelCenter.x + self.keyboardShift, self.panelCenter.y);
 
+    [self applyDefaultBallIfNeeded];
     self.ball.center = self.ballCenter;
 
     self.header.frame = CGRectMake(0, 0, panelW, headerH);
