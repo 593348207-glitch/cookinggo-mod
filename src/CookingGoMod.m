@@ -937,11 +937,17 @@ static const int kCGMResCount = 5;
     CGRect vb = self.view.bounds;
     if (vb.size.width < 1 || vb.size.height < 1) { return; }
     CGFloat angle = (CGFloat)gCfgRot * (CGFloat)M_PI / 180.0;
-    CGRect area = [self safeFrame];
+    BOOL rotated = (gCfgRot != 0);
+    /* The stage must span the FULL window after rotation. Sizing it from the
+       safe frame shrank it (750pt across an 844pt window), so the outer edges
+       of the screen could not be addressed at all - that is why both edge
+       candidates collapsed onto the same point in 1.1.4. Safe-area padding is
+       applied inside safeFrame instead. */
+    CGSize stageSize = rotated ? CGSizeMake(vb.size.height, vb.size.width) : vb.size;
     self.stage.transform = CGAffineTransformIdentity;
-    self.stage.bounds = CGRectMake(0, 0, area.size.width, area.size.height);
+    self.stage.bounds = CGRectMake(0, 0, stageSize.width, stageSize.height);
     self.stage.center = CGPointMake(CGRectGetMidX(vb), CGRectGetMidY(vb));
-    if (gCfgRot != 0) { self.stage.transform = CGAffineTransformMakeRotation(angle); }
+    if (rotated) { self.stage.transform = CGAffineTransformMakeRotation(angle); }
 }
 
 - (void)layoutChrome {
@@ -951,18 +957,15 @@ static const int kCGMResCount = 5;
 
     if (!self.didInitPositions) {
         self.didInitPositions = YES;
-        /* Default: whichever stage edge ends up on the operator's left once
-           the rotation is applied. Rather than reasoning about the transform,
-           both candidate edges are converted to view space and the leftmost is
-           taken - that stays correct for any rot value or safe area. */
+        /* Default: the edge the operator sees on their left, vertically
+           centred. Stated in view space and converted, so it is correct for any
+           rot value without reasoning about which stage axis maps where. */
+        CGRect sv = [self safeViewFrame];
         CGFloat vr = 27.0 + 6.0;
-        CGPoint candA = CGPointMake(CGRectGetMinX(safe) + vr, CGRectGetMidY(safe));
-        CGPoint candB = CGPointMake(CGRectGetMaxX(safe) - vr, CGRectGetMidY(safe));
-        CGFloat ax = [self viewPointForStagePoint:candA].x;
-        CGFloat bx = [self viewPointForStagePoint:candB].x;
-        CGMLog(@"default ball candidates: A=%.0f B=%.0f (stage %.0f,%.0f | %.0f,%.0f)",
-               ax, bx, candA.x, candA.y, candB.x, candB.y);
-        [self placeBall:(ax <= bx ? candA : candB)];
+        CGPoint want = CGPointMake(CGRectGetMinX(sv) + vr, CGRectGetMidY(sv));
+        CGPoint sp = [self stagePointForViewPoint:want];
+        CGMLog(@"default ball: view %.0f,%.0f -> stage %.0f,%.0f", want.x, want.y, sp.x, sp.y);
+        [self placeBall:sp];
         self.panelCenter = CGPointMake(CGRectGetMidX(safe), CGRectGetMidY(safe));
         [self restoreBallPosition];
     }
