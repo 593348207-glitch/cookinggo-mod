@@ -93,7 +93,7 @@ static int gCfgObjc    = 1;   /* ObjC file-API hooks: the JS injection path     
 static int gCfgPosix   = 0;   /* POSIX open-family hooks: invasive, opt-in       */
 static int gCfgOverlay = 1;   /* floating panel UI                               */
 static int gCfgPanelOpen = 0; /* open the panel at launch (layout diagnostics)   */
-static int gCfgRot = 90;      /* rotate the overlay to match the game's drawing  */
+static int gCfgRot = 0;      /* rotate the overlay to match the game's drawing  */
 
 static void CGMApplyConfigLine(const char *line) {
     if (!line) { return; }
@@ -901,8 +901,9 @@ static const int kCGMResCount = 5;
     self.probeButton.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
     [self.panel addSubview:self.probeButton];
 
-    self.statusLabel = [self makeLabel:@"JS: 等待注入..." size:11.0 bold:NO color:[UIColor colorWithWhite:0.85 alpha:1.0]];
-    [self.panel addSubview:self.statusLabel];
+    /* Deliberately NOT added to the panel: the status line under 自检 is hidden.
+       Live state is still available in mod.log and ui_state.json. */
+    self.statusLabel = [self makeLabel:@"" size:11.0 bold:NO color:[UIColor colorWithWhite:0.85 alpha:1.0]];
 
     self.logView = [[UITextView alloc] initWithFrame:CGRectZero];
     self.logView.backgroundColor = [UIColor colorWithWhite:0.02 alpha:0.85];
@@ -1021,7 +1022,6 @@ static const int kCGMResCount = 5;
     y += inputH + 8.0;
 
     self.probeButton.frame = CGRectMake(pad, y, 60.0, 24.0);
-    self.statusLabel.frame = CGRectMake(pad + 68.0, y, panelW - 3.0 * pad - 68.0, 24.0);
     y += 24.0 + 8.0;
 
     CGFloat logH = panelH - y - pad;
