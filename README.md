@@ -146,7 +146,7 @@ Fix helper for macOS recursive re-signing:
 bash tools/resign_ipa_recursive.sh --ipa "Cooking Go_1.26.02.ipa" --identity "Apple Development: Name (TEAMID)" --provision embedded.mobileprovision --out CookingGo_1.26.02.resigned.ipa
 ```
 
-Full notes: `docs/CRASH-TRIAGE-12602.md` and `docs/SIGNING-FIX-12602.md`.
+Full notes: `docs/CRASH-TRIAGE-12602.md`, `docs/SIGNING-FIX-12602.md`, and `docs/RUNTIME-HOOK-12602.md`.
 
 Verdict: the immediate crash root is signing/library-validation/dyld loading state of the installed 1.26.02 app bundle. The mod DEB static closure is clean; do not write the live `index.jsc` while this dyld issue is unresolved.
 
