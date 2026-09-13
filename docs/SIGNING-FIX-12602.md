@@ -1,0 +1,100 @@
+# Cooking GO 1.26.02 dyld / Library Validation fix path
+
+## Current failure
+
+The 1.26.02 app currently exits before Cocos/JS startup. The verified failure is a signing/library-validation mismatch:
+
+```text
+Library Validation failed: Rejecting .../Frameworks/AdjustSdk.framework/AdjustSdk
+for process AirplaneCooking ... (Team ID: none, platform: yes)
+reason: mapping process is a platform binary, but mapped file is not
+RBSProcessExitStatus| domain:dyld(6) code:1
+```
+
+The live `assets/scriptBundle/index.jsc` is original and readable:
+
+```text
+cb1825d4c535f77de8cafbec1d4b73e65d10f43835d04cb091c856b4967269d0
+```
+
+So the base game bundle must be fixed before testing the mod or IAP hook.
+
+## Static closure commands
+
+```powershell
+python F:\测试\cookingGO\github-cookinggo-mod\tools\analyze_ipa_closure.py `
+  --ipa "F:\测试\cookingGO\Cooking Go_1.26.02.ipa"
+```
+
+Expected current evidence:
+
+```text
+Missing non-system @rpath deps: 0
+App _CodeSignature/CodeResources: False
+Framework CodeResources missing: 23/23
+```
+
+## Device launch triage
+
+```powershell
+python F:\测试\cookingGO\github-cookinggo-mod\tools\device_launch_triage.py `
+  --mcp F:\测试\cookingGO\mcp.py `
+  --out F:\测试\cookingGO\_work\device_launch_triage_12602.txt
+```
+
+Look for:
+
+```text
+has_library_validation_failure: true
+has_dyld_exit: true
+first_rejected_library: .../Frameworks/AdjustSdk.framework/AdjustSdk
+```
+
+## Fix option A: clean install
+
+Install a clean App Store/TestFlight or otherwise correctly signed 1.26.02 build. Then rerun `device_launch_triage.py`. The base game must launch with no `Library Validation failed` line before reinstalling `com.seagull.cookinggomod`.
+
+## Fix option B: recursive re-sign on macOS
+
+Use the provided script on macOS with Xcode command-line tools:
+
+```bash
+security find-identity -v -p codesigning
+
+bash tools/resign_ipa_recursive.sh \
+  --ipa "/path/to/Cooking Go_1.26.02.ipa" \
+  --identity "Apple Development: Your Name (TEAMID)" \
+  --provision /path/to/embedded.mobileprovision \
+  --out /path/to/CookingGo_1.26.02.resigned.ipa
+```
+
+If you already have an entitlements plist:
+
+```bash
+bash tools/resign_ipa_recursive.sh \
+  --ipa "/path/to/Cooking Go_1.26.02.ipa" \
+  --identity "Apple Development: Your Name (TEAMID)" \
+  --entitlements ./entitlements.plist \
+  --out ./CookingGo_1.26.02.resigned.ipa
+```
+
+The important invariant is that the main executable and every embedded framework are signed consistently. The previous broken state had:
+
+```text
+main executable: TeamIdentifier=not set
+AdjustSdk.framework: TeamIdentifier=KT32KPGAK9
+```
+
+## Post-fix verification order
+
+1. Install the clean/resigned IPA.
+2. Launch the game without the tweak.
+3. Run `device_launch_triage.py`; require no `Library Validation failed` and no `dyld(6) code:1`.
+4. Confirm live `index.jsc` SHA if still using the supported static payload path.
+5. Install `com.seagull.cookinggomod_1.3.1_iphoneos-arm64.deb`.
+6. Validate overlay/state files.
+7. Only then continue with runtime injection work for 1.26.02 encrypted JSC.
+
+## Do not do this while base game is broken
+
+Do not overwrite the live app bundle `assets/scriptBundle/index.jsc` as a crash workaround. The current crash happens before JS execution, and bundle mutation only adds more signing noise.

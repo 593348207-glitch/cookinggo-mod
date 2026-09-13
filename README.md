@@ -10,7 +10,7 @@ iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.1**
 
 | item | status |
 |---|---|
-| game launches, no crash | PASS |
+| game launches, no crash | PASS on 1.25.03; 1.26.02 current IPA launch fails before JS due Library Validation / dyld |
 | floating ball visible, draggable, snaps to edge | PASS |
 | panel layout correct in the game's landscape orientation | PASS |
 | 钻石 / 金币 / 燃油 / 免广告券 / 换装币 | PASS (all five) |
@@ -23,7 +23,7 @@ iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.1**
 |---|---|---|
 | engine | **Cocos Creator 2.4.11 + cocos2d-x lite** | binary string `/Applications/Cocos/Creator/2.4.11/.../jsb_cocos2dx_auto.cpp`; `src/cocos2d-jsb.js`; `jsb-adapter/*` |
 | script VM | **V8** (not JavaScriptCore, not IL2CPP) | 550 `_ZN2v8*` symbols; `--expose-gc-as=__jsb_gc__`; `se::ScriptEngine::evalString` |
-| scripts | plain JS, `encrypted:false`, zero `.jsc` | `assets/scriptBundle/config.json` |
+| scripts | 1.25.03 plain `index.js`; 1.26.02 encrypted/gzipped XXTEA `index.jsc` | `assets/scriptBundle/config.json` |
 | module system | `window.__require(name)` over 775 modules in `assets/scriptBundle/index.js` | first line of that file |
 | singleton root | **`__require("Manager").default`** | keys include `PlayerData`, `MapData`, `ServerData`, `Auth`, `Pay`, ... |
 | event bus | `__require("Core").default.Event` | `Core` module `static get Event()` |
@@ -58,10 +58,12 @@ The game **does not** read `assets/scriptBundle/index.js` through `+[NSData data
 On-device hook-hit telemetry (v1.0.4) recorded hundreds of hits on those APIs but **none** for the
 target file, and hooking the POSIX `open` family killed the process during startup.
 
-Working approach, used since 1.0.5: **`DEBIAN/postinst` appends `CookingGoMod.bootstrap.js` to the
+Working approach for 1.25.03, used since 1.0.5: **`DEBIAN/postinst` appends `CookingGoMod.bootstrap.js` to the
 on-disk `index.js` as root**, keeping a pristine copy at
 `/var/mobile/Library/Caches/cookingmod/index.js.orig`. `DEBIAN/postrm` restores it.
 The ObjC hooks remain in the dylib for diagnostics only (`objc=0` disables them).
+
+For 1.26.02, `index.jsc` is encrypted/gzipped XXTEA. v1.3.1 ships a statically verified patched JSC payload for CI/package closure, but **postinst deliberately leaves the live signed app bundle unchanged**. Direct live mutation of the app bundle can break the install/signature state; runtime injection must move to a decrypted-buffer / Cocos script-engine hook before launch.
 
 Because the pod is re-signed after a game update, **re-run `dpkg -i` after updating the game**; the
 runtime logs a warning if the bootstrap is missing.
@@ -121,6 +123,32 @@ CI: `.github/workflows/build-deb.yml` (macos-15, builds and publishes a Release)
 dpkg -i com.seagull.cookinggomod_<ver>_iphoneos-arm64.deb   # as root
 dpkg -r com.seagull.cookinggomod                            # restores index.js
 ```
+## 1.26.02 launch-failure closure
+
+Current device state (2026-09-13): the game exits before JS/bootstrap. This is not caused by `CookingGoMod.bootstrap.js` or the patched `index.jsc` payload. Evidence:
+
+- tweak package was removed and live `assets/scriptBundle/index.jsc` SHA-256 is still the original `cb1825d4c535f77de8cafbec1d4b73e65d10f43835d04cb091c856b4967269d0`;
+- launch log shows `RBSProcessExitStatus| domain:dyld(6) code:1`;
+- kernel log shows `Library Validation failed: Rejecting .../Frameworks/AdjustSdk.framework/AdjustSdk ... for process ... (Team ID: none, platform: yes), reason: mapping process is a platform binary, but mapped file is not`;
+- `ldid -h` on the installed main executable reports `TeamIdentifier=not set`, while `AdjustSdk.framework` reports `TeamIdentifier=KT32KPGAK9`;
+- the supplied 1.26.02 IPA has no `.app/_CodeSignature/CodeResources`, and all 23 embedded frameworks are missing framework `_CodeSignature/CodeResources` entries in the archive.
+
+Repro tools:
+
+```powershell
+python F:\测试\cookingGO\github-cookinggo-mod\tools\analyze_ipa_closure.py --ipa F:\测试\cookingGO\Cooking Go_1.26.02.ipa
+python F:\测试\cookingGO\github-cookinggo-mod\tools\device_launch_triage.py --mcp F:\测试\cookingGO\mcp.py --out F:\测试\cookingGO\_work\device_launch_triage_12602.txt
+```
+
+Fix helper for macOS recursive re-signing:
+
+```bash
+bash tools/resign_ipa_recursive.sh --ipa "Cooking Go_1.26.02.ipa" --identity "Apple Development: Name (TEAMID)" --provision embedded.mobileprovision --out CookingGo_1.26.02.resigned.ipa
+```
+
+Full notes: `docs/CRASH-TRIAGE-12602.md` and `docs/SIGNING-FIX-12602.md`.
+
+Verdict: the immediate crash root is signing/library-validation/dyld loading state of the installed 1.26.02 app bundle. The mod DEB static closure is clean; do not write the live `index.jsc` while this dyld issue is unresolved.
 
 ## 1.3.1 月卡/IAP Hook + 1.26.02 encrypted JSC
 
@@ -132,7 +160,7 @@ dpkg -r com.seagull.cookinggomod                            # restores index.js
 
 验证文件：`state.json` 会增加 `iapHook`、`iapHookInstalledPay`、`iapHookInstalledIOS`、`vip` 字段；`probe.json` 会增加 `hasPay`、`hasYiFaniOS`、`vip`。
 
-- 1.26.02 support: `postinst` now restores/copies a prebuilt encrypted `assets/scriptBundle/index.jsc` payload when the original JSC SHA-256 matches the supported release.
+- 1.26.02 support: package carries `CookingGoMod.index12602.jsc` for static verification. `postinst` only verifies/backs up/reports the supported original JSC and leaves the live app bundle unchanged.
 
 
 ## 1.3.1 静态闭环验证
@@ -140,5 +168,5 @@ dpkg -r com.seagull.cookinggomod                            # restores index.js
 - 新 IPA SHA-256：`8fd0e3a5259f8561773fb6a60db5aaf21c57ab44df1487b9981018f865057710`。
 - `1.26.02` 的 `scriptBundle/config.json` 为 `encrypted:true`，运行时脚本是 `index.jsc`；不再尝试把 JS 文本追加到 `index.jsc`。
 - 工具 `tools/patch_cocos_jsc.py` 完成 XXTEA → gzip 解包、追加 bootstrap、gzip → XXTEA 回封，并执行 round-trip self-check。
-- 静态包验收：`dpkg-deb -f`、`dpkg-deb -c`、`tools/verify_deb.sh` 均通过；目标 DEB SHA-256：`56AA5B0AEF7C0F587E9BACD520F08A363BA5C7E01071E2F4284314E6205F44E8`。
+- 静态包验收：`dpkg-deb -f`、`dpkg-deb -c`、`tools/verify_deb.sh` 均通过；目标 DEB SHA-256：`2D7F44A0EDC1E3F8465EC62AFE933EE4825055357EF90517DACA19B687486FD9`。
 - 设备侧已确认原始 `index.jsc` SHA-256 为 `cb1825d4c535f77de8cafbec1d4b73e65d10f43835d04cb091c856b4967269d0`；旧版路径未被错误修改。
