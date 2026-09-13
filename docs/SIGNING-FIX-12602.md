@@ -56,7 +56,19 @@ first_rejected_library: .../Frameworks/AdjustSdk.framework/AdjustSdk
 
 Install a clean App Store/TestFlight or otherwise correctly signed 1.26.02 build. Then rerun `device_launch_triage.py`. The base game must launch with no `Library Validation failed` line before reinstalling `com.seagull.cookinggomod`.
 
-## Fix option B: recursive re-sign on macOS
+## Fix option B: live-device ad-hoc re-sign fallback
+
+When macOS signing material is not available, the lab device can repair the installed bundle in place with the MCP root helper:
+
+```powershell
+python F:\测试\cookingGO\github-cookinggo-mod\tools\device_resign_live_app.py `
+  --mcp F:\测试\cookingGO\mcp.py `
+  --out F:\测试\cookingGO\_work\device_resign_live_app.json
+```
+
+This signs every embedded framework binary first and `AirplaneCooking-mobile` last via `mcp-root /usr/bin/mcp-ldid -S`. It leaves `assets/scriptBundle/index.jsc` and the DEB payload untouched. Current device result after this path: base launch gate passes with `lv=0`, `dyld=0`.
+
+## Fix option C: recursive re-sign on macOS
 
 Use the provided script on macOS with Xcode command-line tools:
 
@@ -95,7 +107,7 @@ After installing or preparing a fixed/resigned base IPA, use:
 python F:\测试\cookingGO\github-cookinggo-mod\tools\postfix_verify_12602.py `
   --mcp F:\测试\cookingGO\mcp.py `
   --install-ipa "F:\测试\cookingGO\dist\CookingGo_1.26.02.resigned.ipa" `
-  --install-deb "F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.2_iphoneos-arm64.deb" `
+  --install-deb "F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.4_iphoneos-arm64.deb" `
   --enable-rt `
   --out F:\测试\cookingGO\_work\postfix_verify_after_resign.json
 ```
@@ -128,8 +140,8 @@ final: STOP: base game launch gate failed; DEB install/rt enable skipped
 2. Launch the game without the tweak.
 3. Run `device_launch_triage.py`; require no `Library Validation failed` and no `dyld(6) code:1`.
 4. Confirm live `index.jsc` SHA if still using the supported static payload path.
-5. Install `com.seagull.cookinggomod_1.3.2_iphoneos-arm64.deb`.
-6. Validate default `rt=0` cfg and overlay/state files.
+5. Install `com.seagull.cookinggomod_1.3.4_iphoneos-arm64.deb`.
+6. Validate default `rt=0` cfg and require a fresh `CookingGoMod v... loaded` marker after stale mailbox files are cleared.
 7. Flip `rt=1` only after `rt=0` passes, then check `runtime evalString hook installed` and JS handshake files.
 8. Only then continue with runtime injection tuning for 1.26.02 encrypted JSC.
 

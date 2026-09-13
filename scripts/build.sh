@@ -68,6 +68,7 @@ chmod 755 "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/postrm"
 chmod 644 "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.bootstrap.js"
 [[ -f "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.index12602.jsc" ]] && chmod 644 "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.index12602.jsc"
 chmod 644 "$PKG/DEBIAN/control" "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.plist"
+chmod 666 "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.cfg"
 chmod 755 "$PKG/var/jb/usr/lib/TweakInject/CookingGoMod.dylib"
 
 # Strip anything that would break install on a read-only root filesystem.

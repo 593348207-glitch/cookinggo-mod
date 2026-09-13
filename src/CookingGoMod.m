@@ -39,7 +39,7 @@
 #import "CGMBootstrap.generated.h"
 
 #ifndef CGM_VERSION
-#define CGM_VERSION @"1.3.1"
+#define CGM_VERSION @"1.3.4"
 #endif
 
 static NSString * const kCGMTargetBundle = @"com.airplanecooking.chef.kitchen.restaurant.diner";
@@ -47,7 +47,8 @@ static NSString * const kCGMRelPath      = @"assets/scriptBundle/index.js";
 static NSString * const kCGMJSCRelPath   = @"assets/scriptBundle/index.jsc";
 static NSString * const kCGMMailboxName  = @"cookingmod";
 static NSString * const kCGMInjectMark   = @"\n/* ==== CookingGoMod bootstrap ==== */\n";
-static const uintptr_t kCGMEvalStringOffset12602 = 0x1c28a48; /* 1.26.02 AirplaneCooking-mobile, from macho_string_xrefs.py */
+static const uintptr_t kCGMEvalStringOffset12602 = 0x1c28a30; /* 1.26.02 ScriptEngine::evalString true entry */
+static const uintptr_t kCGMScriptEngineGetInstanceOffset12602 = 0x1c263cc; /* callers use this immediately before evalString/runScript */
 
 /* ============================== logging =================================== */
 
@@ -539,13 +540,18 @@ static void CGMInstallPOSIXHooks(void) {
 
 /* --- 1.26.02 runtime evalString hook (experimental, config rt=1) ----------- */
 
-/* Static coordinate from tools/macho_string_xrefs.py:
-     ScriptEngine::evalString candidate VA 0x101c28a48, image-base offset 0x1c28a48.
+/* Static coordinates for 1.26.02:
+     evalString entry VA 0x101c28a30 / offset 0x1c28a30. The earlier xref
+     helper landed at 0x101c28a48 inside the prologue, which installed but did
+     not produce a JS receipt. Callers use getInstance at 0x101c263cc before
+     evalString/runScript; v1.3.4 uses it for delayed bootstrap retries.
    Expected arm64 C++ member ABI shape: x0=this, x1=script, x2=length,
-   x3=ret, x4=filename. Keep disabled by default until the base 1.26.02 app
-   launches cleanly and the ABI is confirmed in IDA/r2. */
+   x3=ret, x4=filename. */
 typedef bool (*CGMEvalString12602Fn)(void *engine, const char *script, long length, void *ret, const char *filename);
+typedef void *(*CGMScriptEngineGetInstance12602Fn)(void);
 static CGMEvalString12602Fn gOrigEvalString12602 = NULL;
+static CGMScriptEngineGetInstance12602Fn gGetScriptEngine12602 = NULL;
+static void *gLastScriptEngine12602 = NULL;
 static volatile int gRuntimeEvalHookInstalled = 0;
 static volatile int gRuntimeEvalPayloadDone = 0;
 static volatile int gRuntimeEvalReentry = 0;
@@ -571,32 +577,60 @@ static BOOL CGMRuntimeEvalShouldInject(const char *script, const char *filename)
     return YES;
 }
 
+static bool CGMRuntimeEvalBootstrap(void *engine, const char *reason) {
+    if (!engine) { return false; }
+    if (!CGMRuntimeEvalShouldInject(NULL, reason)) { return false; }
+    __sync_fetch_and_add(&gRuntimeEvalReentry, 1);
+    bool injectedOk = false;
+    @try {
+        NSData *payloadData = [gJSPayload dataUsingEncoding:NSUTF8StringEncoding];
+        const char *payload = (const char *)payloadData.bytes;
+        long payloadLen = (long)payloadData.length;
+        if (gOrigEvalString12602 && payload && payloadLen > 0) {
+            injectedOk = gOrigEvalString12602(engine, payload, payloadLen, NULL, "CookingGoMod.bootstrap.js");
+        }
+        if (injectedOk) { __sync_bool_compare_and_swap(&gRuntimeEvalPayloadDone, 0, 1); }
+        CGMLog(@"runtime evalString bootstrap %@ reason=%s engine=%p",
+               injectedOk ? @"OK" : @"FAILED", reason ? reason : "<null>", engine);
+    } @catch (NSException *e) {
+        CGMLog(@"runtime evalString bootstrap exception reason=%s: %@", reason ? reason : "<null>", e);
+    }
+    __sync_fetch_and_sub(&gRuntimeEvalReentry, 1);
+    return injectedOk;
+}
+
 static bool CGMEvalString12602(void *engine, const char *script, long length, void *ret, const char *filename) {
+    gLastScriptEngine12602 = engine;
     bool ok = false;
     if (gOrigEvalString12602) {
         ok = gOrigEvalString12602(engine, script, length, ret, filename);
     }
     if (CGMRuntimeEvalShouldInject(script, filename)) {
-        __sync_fetch_and_add(&gRuntimeEvalReentry, 1);
-        @try {
-            NSData *payloadData = [gJSPayload dataUsingEncoding:NSUTF8StringEncoding];
-            const char *payload = (const char *)payloadData.bytes;
-            long payloadLen = (long)payloadData.length;
-            bool injectedOk = false;
-            if (gOrigEvalString12602 && payload && payloadLen > 0) {
-                injectedOk = gOrigEvalString12602(engine, payload, payloadLen, NULL, "CookingGoMod.bootstrap.js");
-            }
-            __sync_bool_compare_and_swap(&gRuntimeEvalPayloadDone, 0, 1);
-            CGMLog(@"runtime evalString bootstrap %@ after script=%s file=%s",
-                   injectedOk ? @"OK" : @"FAILED",
-                   script ? "<non-null>" : "<null>",
-                   filename ? filename : "<null>");
-        } @catch (NSException *e) {
-            CGMLog(@"runtime evalString bootstrap exception: %@", e);
-        }
-        __sync_fetch_and_sub(&gRuntimeEvalReentry, 1);
+        CGMRuntimeEvalBootstrap(engine, filename ? filename : "hook-hit");
     }
     return ok;
+}
+
+static void CGMScheduleRuntimeEvalBootstrap(void) {
+    if (!gCfgRuntimeEval) { return; }
+    const double delays[] = { 0.25, 1.0, 2.5, 5.0, 8.0 };
+    for (unsigned i = 0; i < sizeof(delays) / sizeof(delays[0]); i++) {
+        double delay = delays[i];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            if (__sync_fetch_and_add(&gRuntimeEvalPayloadDone, 0) != 0) { return; }
+            void *engine = gLastScriptEngine12602;
+            if (!engine && gGetScriptEngine12602) {
+                @try { engine = gGetScriptEngine12602(); } @catch (NSException *e) { engine = NULL; }
+            }
+            if (!engine) {
+                CGMLog(@"runtime evalString bootstrap deferred: ScriptEngine unavailable delay=%.2f", delay);
+                return;
+            }
+            gLastScriptEngine12602 = engine;
+            CGMRuntimeEvalBootstrap(engine, "scheduled-getInstance");
+        });
+    }
 }
 
 static void CGMInstallRuntimeEvalHook(void) {
@@ -615,11 +649,15 @@ static void CGMInstallRuntimeEvalHook(void) {
     const struct mach_header *mh = CGMMainMachHeader();
     if (!mh) { CGMLog(@"main Mach-O header not found -> runtime evalString hook skipped"); return; }
 
+    gGetScriptEngine12602 = (CGMScriptEngineGetInstance12602Fn)((uintptr_t)mh + kCGMScriptEngineGetInstanceOffset12602);
     void *target = (void *)((uintptr_t)mh + kCGMEvalStringOffset12602);
     gMSHookFunction(target, (void *)CGMEvalString12602, (void **)&gOrigEvalString12602);
     if (gOrigEvalString12602) {
         __sync_bool_compare_and_swap(&gRuntimeEvalHookInstalled, 0, 1);
-        CGMLog(@"runtime evalString hook installed target=%p offset=0x%lx", target, (unsigned long)kCGMEvalStringOffset12602);
+        CGMLog(@"runtime evalString hook installed target=%p offset=0x%lx getInstance=%p getOffset=0x%lx",
+               target, (unsigned long)kCGMEvalStringOffset12602,
+               (void *)gGetScriptEngine12602, (unsigned long)kCGMScriptEngineGetInstanceOffset12602);
+        CGMScheduleRuntimeEvalBootstrap();
     } else {
         CGMLog(@"runtime evalString hook attempted but original pointer is NULL target=%p", target);
     }

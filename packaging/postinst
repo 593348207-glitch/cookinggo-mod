@@ -20,7 +20,9 @@ JSC_ORIG_SIZE=880072
 
 
 chmod 755 "$INJ/CookingGoMod.dylib" 2>/dev/null
-chmod 644 "$INJ/CookingGoMod.plist" "$INJ/CookingGoMod.cfg" "$PAYLOAD" "$JSC_PAYLOAD" 2>/dev/null
+chmod 644 "$INJ/CookingGoMod.plist" "$PAYLOAD" "$JSC_PAYLOAD" 2>/dev/null
+# Keep the runtime switch file editable by the mobile-owned verifier/panel flows.
+chmod 666 "$INJ/CookingGoMod.cfg" 2>/dev/null
 
 if [ ! -f "$PAYLOAD" ]; then
     echo "CookingGoMod: bootstrap payload missing, skipping script patch"

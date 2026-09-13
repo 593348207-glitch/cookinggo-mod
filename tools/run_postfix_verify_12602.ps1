@@ -9,6 +9,7 @@ param(
     [switch]$InstallDeb,
     [switch]$EnableRt,
     [switch]$RemoveTweakFirst,
+    [switch]$KeepMailbox,
     [int]$Seconds = 25,
     [string]$Out = ""
 )
@@ -38,7 +39,7 @@ if ([string]::IsNullOrWhiteSpace($Mcp)) {
     $Mcp = Join-Path $projectRoot "mcp.py"
 }
 if ([string]::IsNullOrWhiteSpace($Deb)) {
-    $Deb = Join-Path $projectRoot "dist\com.seagull.cookinggomod_1.3.2_iphoneos-arm64.deb"
+    $Deb = Join-Path $projectRoot "dist\com.seagull.cookinggomod_1.3.4_iphoneos-arm64.deb"
 }
 if ([string]::IsNullOrWhiteSpace($Out)) {
     $Out = Join-Path $projectRoot "_work\postfix_verify_12602.json"
@@ -64,6 +65,7 @@ if ($InstallIpa) { $argsList += @("--install-ipa", $ipaPath) }
 if ($InstallDeb) { $argsList += @("--install-deb", $debPath) }
 if ($EnableRt) { $argsList += "--enable-rt" }
 if ($RemoveTweakFirst) { $argsList += "--remove-tweak-first" }
+if ($KeepMailbox) { $argsList += "--keep-mailbox" }
 
 Write-Host "== Cooking GO 1.26.02 post-fix verifier"
 Write-Host "repo      : $repoPath"
@@ -72,6 +74,7 @@ Write-Host "out       : $Out"
 Write-Host "installIPA: $InstallIpa $ipaPath"
 Write-Host "installDEB: $InstallDeb $debPath"
 Write-Host "enableRt  : $EnableRt"
+Write-Host "keepBox   : $KeepMailbox"
 Write-Host ""
 
 & python @argsList

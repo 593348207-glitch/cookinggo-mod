@@ -87,29 +87,34 @@ Current result for the 1.26.02 main binary:
 String VA 0x1028a6d85 file 0x28a6d85: ScriptEngine::evalString catch exception:
 String VA 0x1028a6db0 file 0x28a6db0: ScriptEngine::evalString script %s, failed!
 
-Xref 0x101c28cf0 file 0x1c28cf0 func=0x101c28a48 -> 0x1028a6d85
-Xref 0x101c28d3c file 0x1c28d3c func=0x101c28a48 -> 0x1028a6db0
+Xref 0x101c28cf0 file 0x1c28cf0 old heuristic func=0x101c28a48 -> 0x1028a6d85
+Xref 0x101c28d3c file 0x1c28d3c old heuristic func=0x101c28a48 -> 0x1028a6db0
+Disassembly-corrected function entry: 0x101c28a30 / file 0x1c28a30
 ```
 
 Static inferred function:
 
 ```text
-candidate_evalString_function_va = 0x101c28a48
-candidate_evalString_function_file_offset = 0x1c28a48
+candidate_evalString_function_va = 0x101c28a30
+candidate_evalString_function_file_offset = 0x1c28a30
 preferred_image_base = 0x100000000
-candidate_runtime_offset_from_image_base = 0x1c28a48
+candidate_runtime_offset_from_image_base = 0x1c28a30
+candidate_getInstance_va = 0x101c263cc
+candidate_getInstance_file_offset = 0x1c263cc
 ```
 
 Runtime address formula when the main image is loaded:
 
 ```c
-uintptr_t evalString = (uintptr_t)main_mach_header + 0x1c28a48;
+uintptr_t evalString = (uintptr_t)main_mach_header + 0x1c28a30;
+uintptr_t getInstance = (uintptr_t)main_mach_header + 0x1c263cc;
 ```
 
 or equivalently:
 
 ```c
-uintptr_t evalString = 0x101c28a48 + _dyld_get_image_vmaddr_slide(main_image_index);
+uintptr_t evalString = 0x101c28a30 + _dyld_get_image_vmaddr_slide(main_image_index);
+uintptr_t getInstance = 0x101c263cc + _dyld_get_image_vmaddr_slide(main_image_index);
 ```
 
 The xref scanner also resolves FileUtils wrapper coordinates:
@@ -126,7 +131,7 @@ getStringFromFile xref 0x101bb5b74
 getDataFromFile   xref 0x101bb5ba4
 ```
 
-IDA/r2 follow-up should start at `0x101c28a48` and recover the exact C++ ABI from callers before enabling a live hook.
+IDA/r2 follow-up should start at `0x101c28a30`; `0x101c28a48` is retained only as the old xref heuristic inside the prologue.
 
 ## Candidate hook levels
 
@@ -209,7 +214,8 @@ Needed static follow-up:
 ```text
 rt=0 default in packaging/CookingGoMod.cfg
 rt=1 enables CGMInstallRuntimeEvalHook()
-target = main_mach_header + 0x1c28a48
+target = main_mach_header + 0x1c28a30
+getInstance = main_mach_header + 0x1c263cc
 replacement = CGMEvalString12602
 payload file name = CookingGoMod.bootstrap.js
 payload guard = gRuntimeEvalPayloadDone + gRuntimeEvalReentry
@@ -223,7 +229,7 @@ Important behavior:
 - `CGMBootstrap.js` already handles early execution by polling/binding until `window.__require("Manager")` is ready;
 - keep `rt=0` while the base 1.26.02 app still dies in dyld/library validation.
 
-The C++ ABI remains marked experimental until IDA/r2 confirms callers around `0x101c28a48`.
+The C++ ABI remains experimental, but callers around `0x100014978`, `0x100014c54`, `0x101ba3ffc`, `0x101bfe438`, and `0x101c28f48` all use the same `x0=this, x1=script, x2=length, x3=ret, x4=filename` shape.
 
 Regression verifier:
 
@@ -234,7 +240,7 @@ python F:\测试\cookingGO\github-cookinggo-mod\tools\static_verify_12602.py `
   --repo "F:\测试\cookingGO\github-cookinggo-mod"
 ```
 
-For v1.3.2+ this asserts `rt=0` remains default-off and that source, dylib marker, and documented `0x1c28a48` coordinate agree.
+For v1.3.2+ this asserts `rt=0` remains default-off and that source, dylib marker, and documented runtime coordinates agree. v1.3.4 asserts `0x1c28a30` plus the `0x1c263cc` getInstance candidate.
 
 Post-fix device verifier:
 
@@ -270,3 +276,7 @@ js_hello.json exists
 probe.json has typeofRequire:function
 state.json has ready:true and iapHook fields
 ```
+
+### 2026-09-13 v1.3.4 correction
+
+On-device rt=1 proved the hook installed but no JS handshake arrived. Static disassembly shows the previous `0x1c28a48` coordinate is inside the `evalString` prologue; the real entry starts at `0x1c28a30`. Callers also invoke `0x101c263cc` immediately before `evalString`/`runScript`, which is the current `ScriptEngine` getter candidate. v1.3.4 therefore hooks the true entry and schedules a late direct bootstrap through `getInstance -> evalString` because TweakInject may load after the encrypted `index.jsc` has already been evaluated.

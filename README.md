@@ -1,6 +1,6 @@
 # CookingGo Mod — Cooking GO 1.25.03/1.26.02
 
-iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.2**
+iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.4**
 
 * Install: `/var/jb/usr/lib/TweakInject/CookingGoMod.dylib` (+ `.plist`, `.cfg`, `.bootstrap.js`)
 * Bundle filter: `com.airplanecooking.chef.kitchen.restaurant.diner`
@@ -162,7 +162,15 @@ Full notes: `docs/CRASH-TRIAGE-12602.md`, `docs/SIGNING-FIX-12602.md`, and `docs
 
 Verdict: the immediate crash root is signing/library-validation/dyld loading state of the installed 1.26.02 app bundle. The mod DEB static closure is clean; do not write the live `index.jsc` while this dyld issue is unresolved.
 
-## 1.3.1/1.3.2 月卡/IAP Hook + 1.26.02 encrypted JSC/runtime hook
+
+## 1.3.4 runtime JS receipt update
+
+- Added `tools/device_resign_live_app.py` as a device-side fallback for the 1.26.02 dyld/Library Validation gate. It signs embedded frameworks first and the main executable last via the MCP root helper's `mcp-ldid -S` allow-list; it does not touch scripts or the DEB payload.
+- Added `tools/run_postfix_verify_12602.ps1`, a PowerShell wrapper whose defaults are derived from the script location to avoid Windows PowerShell 5.1 Chinese-path mojibake.
+- `tools/postfix_verify_12602.py` now distinguishes `install ok installed` from `deinstall ok config-files`, clears stale mailbox marker files by default before tweak gates, and requires a fresh `CookingGoMod v... loaded` marker for `rt=0` instead of accepting old logs.
+- Current device result after live signing: base launch gate passes (`lv=0`, `dyld=0`). v1.3.3 DEB installs and `rt=0` passes after mailbox-aware detection. rt=1 now installs cleanly but initially produced no JS handshake; v1.3.4 corrects the evalString entry from `0x1c28a48` to `0x1c28a30` and adds a scheduled `ScriptEngine::getInstance` late bootstrap so panel commands no longer remain stuck at `等待 JS 回执` once JS is reachable.
+
+## 1.3.1/1.3.2/1.3.3/1.3.4 月卡/IAP Hook + 1.26.02 encrypted JSC/runtime hook
 
 - 新增独立运行期开关：面板按钮 `内购:关/开`，状态持久化到 `<container>/Documents/cookingmod/iap_hook.json`。
 - 新增按钮 `免费月卡`：直接触发已定位的月卡发放链路 `Manager.VipCard.setPlayerVipDataByGiftId(...)`，随后 `saveVipCardData(false)` 并刷新相关 UI event。
@@ -173,14 +181,14 @@ Verdict: the immediate crash root is signing/library-validation/dyld loading sta
 验证文件：`state.json` 会增加 `iapHook`、`iapHookInstalledPay`、`iapHookInstalledIOS`、`vip` 字段；`probe.json` 会增加 `hasPay`、`hasYiFaniOS`、`vip`。
 
 - 1.26.02 support: package carries `CookingGoMod.index12602.jsc` for static verification. `postinst` only verifies/backs up/reports the supported original JSC and leaves the live app bundle unchanged.
-- Added default-off runtime evalString hook skeleton: `rt=1` hooks the 1.26.02 candidate at image-base offset `0x1c28a48` and evals `CookingGoMod.bootstrap.js` once after the original script evaluation. Keep `rt=0` until the base game signing issue is fixed.
+- Added default-off runtime evalString hook skeleton: `rt=1` hooks the 1.26.02 candidate at image-base offset `0x1c28a30` and evals `CookingGoMod.bootstrap.js`; v1.3.4 also calls the `ScriptEngine::getInstance` candidate at `0x1c263cc` on delayed main-queue retries for late TweakInject loads. Keep `rt=0` until the base game signing issue is fixed.
 
 
-## 1.3.1/1.3.2 静态闭环验证
+## 1.3.1/1.3.2/1.3.3/1.3.4 静态闭环验证
 
 - 新 IPA SHA-256：`8fd0e3a5259f8561773fb6a60db5aaf21c57ab44df1487b9981018f865057710`。
 - `1.26.02` 的 `scriptBundle/config.json` 为 `encrypted:true`，运行时脚本是 `index.jsc`；不再尝试把 JS 文本追加到 `index.jsc`。
 - 工具 `tools/patch_cocos_jsc.py` 完成 XXTEA → gzip 解包、追加 bootstrap、gzip → XXTEA 回封，并执行 round-trip self-check。
-- `tools/static_verify_12602.py` 同时读取 DEB ar/tar 结构；v1.3.2+ 会断言包内 `rt=0`、源码 `kCGMEvalStringOffset12602 = 0x1c28a48`、dylib runtime hook marker、`docs/RUNTIME-HOOK-12602.md` 坐标一致。
+- `tools/static_verify_12602.py` 同时读取 DEB ar/tar 结构；v1.3.2+ 会断言包内 `rt=0`、源码 `kCGMEvalStringOffset12602 = 0x1c28a30` / `kCGMScriptEngineGetInstanceOffset12602 = 0x1c263cc`、dylib runtime hook marker、`docs/RUNTIME-HOOK-12602.md` 坐标一致。
 - 静态包验收：`dpkg-deb -f`、`dpkg-deb -c`、`tools/verify_deb.sh` 均通过；目标 DEB SHA-256：`8B596DA14EE275EF66F12590ADFBC35CE080CDF99F200052EF0B4A831E5FD0F4`。
 - 设备侧已确认原始 `index.jsc` SHA-256 为 `cb1825d4c535f77de8cafbec1d4b73e65d10f43835d04cb091c856b4967269d0`；旧版路径未被错误修改。

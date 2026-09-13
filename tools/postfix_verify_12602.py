@@ -159,7 +159,30 @@ def read_device_file(mcp: Any, path: str, max_bytes: int = 262144) -> str:
 
 
 def write_device_file(mcp: Any, path: str, content: str) -> Any:
-    return call(mcp, "write_file", {"path": path, "content": content, "encoding": "utf8"})
+    result = call(mcp, "write_file", {"path": path, "content": content, "encoding": "utf8"})
+    try:
+        if read_device_file(mcp, path, max(len(content) + 64, 4096)) == content:
+            return result
+    except Exception:
+        pass
+
+    # Some MCP write_file implementations use a same-directory temporary file.
+    # /var/jb/usr/lib/TweakInject is root-owned, while CookingGoMod.cfg is made
+    # world-writable for lab toggles; direct shell redirection can still update
+    # the existing file without directory write permission.
+    marker = "CGM_CFG_EOF"
+    expected = content if content.endswith("\n") else content + "\n"
+    while marker in expected:
+        marker += "_X"
+    cmd = f"cat > {sh_quote(path)} <<'{marker}'\n{expected}{marker}\n"
+    fallback = run_cmd(mcp, cmd, 10)
+    actual = read_device_file(mcp, path, max(len(expected) + 64, 4096))
+    if actual != expected:
+        raise SystemExit(
+            "failed to update device file "
+            f"{path}: fallback={fallback!r} actual_tail={actual[-200:]!r}"
+        )
+    return fallback
 
 
 def set_rt_in_cfg(mcp: Any, cfg_path: str, enabled: bool) -> str:
@@ -182,6 +205,36 @@ def mailbox_path(app_info: dict[str, Any]) -> str:
     return data.rstrip("/") + "/Documents/cookingmod"
 
 
+def discover_mailbox_paths(mcp: Any, app_info: dict[str, Any]) -> list[str]:
+    cands: list[str] = []
+    primary = mailbox_path(app_info)
+
+    # Re-signed/ad-hoc lab installs may leave MobileContainerManager metadata
+    # under the bundle id while NSHomeDirectory() resolves to the executable id
+    # container. Prefer all existing cookingmod mailboxes, newest mod.log first.
+    cmd = r"""
+find /var/mobile/Containers/Data/Application -path '*/Documents/cookingmod' -type d -print 2>/dev/null | while read d; do
+  ts=0
+  [ -f "$d/mod.log" ] && ts=$(stat -f '%m' "$d/mod.log" 2>/dev/null || stat -c '%Y' "$d/mod.log" 2>/dev/null || echo 0)
+  printf '%s	%s
+' "$ts" "$d"
+done | sort -nr | cut -f2-
+""".strip()
+    r = run_cmd(mcp, cmd, 20)
+    for line in str(r.get("output", "")).splitlines():
+        line = line.strip()
+        if line.startswith("/") and line not in cands:
+            cands.append(line)
+    if primary and primary != "/Documents/cookingmod" and primary not in cands:
+        cands.append(primary)
+    return cands
+
+
+def active_mailbox_path(mcp: Any, app_info: dict[str, Any]) -> str:
+    paths = discover_mailbox_paths(mcp, app_info)
+    return paths[0] if paths else mailbox_path(app_info)
+
+
 def package_installed(mcp: Any, package_id: str) -> bool:
     # `dpkg -s` also exits 0 for a package left in `deinstall ok config-files`
     # state. Require the exact installed status so a removed tweak does not
@@ -194,14 +247,27 @@ def package_installed(mcp: Any, package_id: str) -> bool:
     return bool(re.search(r"(?m)^install ok installed\s*$", str(r.get("output", ""))))
 
 
+def clear_tweak_runtime_files(mcp: Any, app_info: dict[str, Any]) -> dict[str, Any]:
+    names = "mod.log js_hello.json probe.json state.json res.json cmd.json ui_cmd.json ui_state.json hits.json"
+    cleared = []
+    for mb in discover_mailbox_paths(mcp, app_info):
+        if not mb or mb == "/Documents/cookingmod":
+            continue
+        r = run_cmd(mcp, f"cd {sh_quote(mb)} 2>/dev/null && rm -f {names} 2>/dev/null || true", 10)
+        cleared.append({"mailbox": mb, "result": r})
+    return {"cleared": cleared} if cleared else {"skipped": "no mailbox paths found"}
+
+
 def collect_tweak_state(mcp: Any, app_info: dict[str, Any], cfg_path: str) -> dict[str, Any]:
     box = {"cfg": run_cmd(mcp, f"cat {sh_quote(cfg_path)} 2>&1", 10)}
-    mb = mailbox_path(app_info)
+    paths = discover_mailbox_paths(mcp, app_info)
+    mb = paths[0] if paths else mailbox_path(app_info)
     box["mailbox"] = mb
+    box["mailbox_candidates"] = paths
     box["mailbox_ls"] = run_cmd(mcp, f"ls -la {sh_quote(mb)} 2>&1", 10)
     for name in ["mod.log", "js_hello.json", "probe.json", "state.json", "iap_hook.json"]:
         p = f"{mb}/{name}"
-        box[name] = run_cmd(mcp, f"test -f {sh_quote(p)} && tail -80 {sh_quote(p)} || true", 10)
+        box[name] = run_cmd(mcp, f"test -f {sh_quote(p)} && tail -200 {sh_quote(p)} || true", 10)
     return box
 
 
@@ -216,6 +282,9 @@ def verdict_base(launch: dict[str, Any]) -> tuple[bool, str]:
 def verdict_rt(state: dict[str, Any], enabled: bool) -> tuple[bool, str]:
     modlog = state.get("mod.log", {}).get("output", "") if isinstance(state.get("mod.log"), dict) else ""
     jshello = state.get("js_hello.json", {}).get("output", "") if isinstance(state.get("js_hello.json"), dict) else ""
+    loaded = re.search(r"CookingGoMod v[0-9][^\n]* loaded", modlog) is not None
+    if not loaded:
+        return False, "fresh tweak load marker not observed"
     if not enabled:
         if "rt=0" in state.get("cfg", {}).get("output", ""):
             return True, "tweak default rt=0 verified"
@@ -234,13 +303,14 @@ def main() -> int:
     ap.add_argument("--package-id", default=DEFAULT_PACKAGE_ID)
     ap.add_argument("--cfg-path", default=DEFAULT_CFG_PATH)
     ap.add_argument("--install-ipa", default="", help="optional local/device path to repaired IPA")
-    ap.add_argument("--install-deb", default="", help="optional local/device path to v1.3.2 DEB")
+    ap.add_argument("--install-deb", default="", help="optional local/device path to v1.3.4 DEB")
     ap.add_argument("--remove-tweak-first", action="store_true")
     ap.add_argument("--enable-rt", action="store_true", help="after rt=0 smoke test, set rt=1 and launch again")
     ap.add_argument("--seconds", type=int, default=25)
     ap.add_argument("--max-lines", type=int, default=5000)
     ap.add_argument("--out", default="")
     ap.add_argument("--print-json", action="store_true", help="print the full JSON report even when --out is used")
+    ap.add_argument("--keep-mailbox", action="store_true", help="do not remove stale runtime marker files before tweak gates")
     ns = ap.parse_args()
 
     mcp = load_mcp(ns.mcp)
@@ -299,6 +369,8 @@ def main() -> int:
             # rt=0 default smoke. Only write cfg after DEB is known/requested present.
             set_rt_in_cfg(mcp, ns.cfg_path, False)
             report["rt0_cfg_written"] = True
+            if not ns.keep_mailbox:
+                report["rt0_clear_runtime_files"] = clear_tweak_runtime_files(mcp, app_info_after)
             call(mcp, "kill_app", {"bundle_id": ns.bundle_id})
             time.sleep(1)
             rt0_launch = capture_launch(mcp, ns.bundle_id, ns.seconds, ns.max_lines)
@@ -313,6 +385,8 @@ def main() -> int:
             elif ns.enable_rt:
                 set_rt_in_cfg(mcp, ns.cfg_path, True)
                 report["rt1_cfg_written"] = True
+                if not ns.keep_mailbox:
+                    report["rt1_clear_runtime_files"] = clear_tweak_runtime_files(mcp, app_info_after)
                 call(mcp, "kill_app", {"bundle_id": ns.bundle_id})
                 time.sleep(1)
                 rt1_launch = capture_launch(mcp, ns.bundle_id, ns.seconds, ns.max_lines)

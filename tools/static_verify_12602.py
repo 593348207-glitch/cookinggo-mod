@@ -137,12 +137,14 @@ def main() -> int:
         src_m = (repo / "src" / "CookingGoMod.m").read_text(encoding="utf-8")
         runtime_doc = (repo / "docs" / "RUNTIME-HOOK-12602.md").read_text(encoding="utf-8")
         assert "rt=0" in cfg_text, "packaged cfg must keep runtime hook default-off"
-        assert "kCGMEvalStringOffset12602 = 0x1c28a48" in src_m
+        assert "kCGMEvalStringOffset12602 = 0x1c28a30" in src_m
+        assert "kCGMScriptEngineGetInstanceOffset12602 = 0x1c263cc" in src_m
         assert "CGMInstallRuntimeEvalHook" in src_m
         assert "runtime evalString hook disabled by config" in src_m
         assert b"runtime evalString hook installed" in data_files[dylib_path]
-        assert "candidate_evalString_function_va = 0x101c28a48" in runtime_doc
-        assert "target = main_mach_header + 0x1c28a48" in runtime_doc
+        assert "candidate_evalString_function_va = 0x101c28a30" in runtime_doc
+        assert "target = main_mach_header + 0x1c28a30" in runtime_doc
+        assert "getInstance = main_mach_header + 0x1c263cc" in runtime_doc
     print("IPA sha256:", hashlib.sha256(ns.ipa.read_bytes()).hexdigest())
     print("original index.jsc sha256:", hashlib.sha256(jsc).hexdigest())
     print("original plain JS bytes:", len(plain))
