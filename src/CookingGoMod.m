@@ -680,6 +680,7 @@ static const int kCGMResCount = 5;
 
     __weak typeof(self) weakSelf = self;
     gLogSink = ^(NSString *line) { [weakSelf appendLog:line]; };
+    [self appendLog:[NSString stringWithFormat:@"CookingGoMod v%@ | 选资源 → 输数字 → + 或 =", CGM_VERSION]];
 }
 
 - (void)dealloc {
@@ -1289,7 +1290,7 @@ static void CGMTick(void) {
         }
 
         NSDictionary *probe = CGMReadJSON([gChosenMailbox stringByAppendingPathComponent:@"probe.json"]);
-        if (probe) {
+        if (probe && gCfgVerboseLog) {
             NSInteger pv = [probe[@"ts"] integerValue];
             if (pv != gLastProbeTs) {
                 gLastProbeTs = pv;
@@ -1365,7 +1366,9 @@ static void CGMTick(void) {
             earlyTicks++;
             if (earlyTicks == 40) {
                 CGMLog(@"WARNING: no JS bootstrap seen. If the game was updated, reinstall com.seagull.cookinggomod.");
-                [gVC appendLog:@"⚠ 未检测到 JS bootstrap：游戏更新过的话，重装本 DEB 即可。"];
+                if (gCfgVerboseLog) {
+                    [gVC appendLog:@"⚠ 未检测到 JS bootstrap：游戏更新过的话，重装本 DEB 即可。"];
+                }
             }
         }
 
