@@ -33,6 +33,8 @@
 #import <fcntl.h>
 #import <sys/stat.h>
 #import <sys/types.h>
+#import <mach-o/dyld.h>
+#include <stdbool.h>
 
 #import "CGMBootstrap.generated.h"
 
@@ -45,6 +47,7 @@ static NSString * const kCGMRelPath      = @"assets/scriptBundle/index.js";
 static NSString * const kCGMJSCRelPath   = @"assets/scriptBundle/index.jsc";
 static NSString * const kCGMMailboxName  = @"cookingmod";
 static NSString * const kCGMInjectMark   = @"\n/* ==== CookingGoMod bootstrap ==== */\n";
+static const uintptr_t kCGMEvalStringOffset12602 = 0x1c28a48; /* 1.26.02 AirplaneCooking-mobile, from macho_string_xrefs.py */
 
 /* ============================== logging =================================== */
 
@@ -103,6 +106,7 @@ static int gCfgPanelOpen = 0; /* open the panel at launch (layout diagnostics)  
 static int gCfgRot = 0;      /* rotate the overlay to match the game's drawing  */
 static int gCfgVerboseLogCfg = 0;
 static int gCfgIAPHook = 0;  /* seed the JS IAP/month-card hook state; default off */
+static int gCfgRuntimeEval = 0; /* experimental 1.26.02 evalString hook, default off */
 
 static void CGMApplyConfigLine(const char *line) {
     if (!line) { return; }
@@ -124,6 +128,7 @@ static void CGMApplyConfigLine(const char *line) {
     else if (strcmp(key, "rot") == 0) { gCfgRot = atoi(eq + 1); }
     else if (strcmp(key, "vlog") == 0) { gCfgVerboseLogCfg = val; }
     else if (strcmp(key, "iap") == 0) { gCfgIAPHook = val; }
+    else if (strcmp(key, "rt") == 0) { gCfgRuntimeEval = val; }
 }
 
 static void CGMReadConfigFile(const char *path) {
@@ -144,8 +149,8 @@ static void CGMReadConfig(void) {
         CGMReadConfigFile(p.fileSystemRepresentation);
     }
     gCfgVerboseLog = gCfgVerboseLogCfg;
-    CGMLog(@"config: objc=%d posix=%d overlay=%d panel=%d rot=%d vlog=%d iap=%d",
-           gCfgObjc, gCfgPosix, gCfgOverlay, gCfgPanelOpen, gCfgRot, gCfgVerboseLog, gCfgIAPHook);
+    CGMLog(@"config: objc=%d posix=%d overlay=%d panel=%d rot=%d vlog=%d iap=%d rt=%d",
+           gCfgObjc, gCfgPosix, gCfgOverlay, gCfgPanelOpen, gCfgRot, gCfgVerboseLog, gCfgIAPHook, gCfgRuntimeEval);
 }
 
 /* ============================== write helpers ============================= */
@@ -529,6 +534,95 @@ static void CGMInstallPOSIXHooks(void) {
 
     CGMLog(@"POSIX hooks: fopen=%d/%d open=%d openat=%d guarded=%d dprotected=%d",
            s1 ? 1 : 0, s2 ? 1 : 0, s3 ? 1 : 0, s4 ? 1 : 0, s5 ? 1 : 0, s6 ? 1 : 0);
+}
+
+
+/* --- 1.26.02 runtime evalString hook (experimental, config rt=1) ----------- */
+
+/* Static coordinate from tools/macho_string_xrefs.py:
+     ScriptEngine::evalString candidate VA 0x101c28a48, image-base offset 0x1c28a48.
+   Expected arm64 C++ member ABI shape: x0=this, x1=script, x2=length,
+   x3=ret, x4=filename. Keep disabled by default until the base 1.26.02 app
+   launches cleanly and the ABI is confirmed in IDA/r2. */
+typedef bool (*CGMEvalString12602Fn)(void *engine, const char *script, long length, void *ret, const char *filename);
+static CGMEvalString12602Fn gOrigEvalString12602 = NULL;
+static volatile int gRuntimeEvalHookInstalled = 0;
+static volatile int gRuntimeEvalPayloadDone = 0;
+static volatile int gRuntimeEvalReentry = 0;
+
+static const struct mach_header *CGMMainMachHeader(void) {
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (!name) { continue; }
+        if (strstr(name, "/AirplaneCooking-mobile.app/AirplaneCooking-mobile")) {
+            return _dyld_get_image_header(i);
+        }
+    }
+    return NULL;
+}
+
+static BOOL CGMRuntimeEvalShouldInject(const char *script, const char *filename) {
+    if (!gJSPayload.length) { return NO; }
+    if (__sync_fetch_and_add(&gRuntimeEvalPayloadDone, 0) != 0) { return NO; }
+    if (__sync_fetch_and_add(&gRuntimeEvalReentry, 0) != 0) { return NO; }
+    if (filename && strstr(filename, "CookingGoMod.bootstrap.js")) { return NO; }
+    if (script && strstr(script, "CookingGoMod bootstrap")) { return NO; }
+    return YES;
+}
+
+static bool CGMEvalString12602(void *engine, const char *script, long length, void *ret, const char *filename) {
+    bool ok = false;
+    if (gOrigEvalString12602) {
+        ok = gOrigEvalString12602(engine, script, length, ret, filename);
+    }
+    if (CGMRuntimeEvalShouldInject(script, filename)) {
+        __sync_fetch_and_add(&gRuntimeEvalReentry, 1);
+        @try {
+            NSData *payloadData = [gJSPayload dataUsingEncoding:NSUTF8StringEncoding];
+            const char *payload = (const char *)payloadData.bytes;
+            long payloadLen = (long)payloadData.length;
+            bool injectedOk = false;
+            if (gOrigEvalString12602 && payload && payloadLen > 0) {
+                injectedOk = gOrigEvalString12602(engine, payload, payloadLen, NULL, "CookingGoMod.bootstrap.js");
+            }
+            __sync_bool_compare_and_swap(&gRuntimeEvalPayloadDone, 0, 1);
+            CGMLog(@"runtime evalString bootstrap %@ after script=%s file=%s",
+                   injectedOk ? @"OK" : @"FAILED",
+                   script ? "<non-null>" : "<null>",
+                   filename ? filename : "<null>");
+        } @catch (NSException *e) {
+            CGMLog(@"runtime evalString bootstrap exception: %@", e);
+        }
+        __sync_fetch_and_sub(&gRuntimeEvalReentry, 1);
+    }
+    return ok;
+}
+
+static void CGMInstallRuntimeEvalHook(void) {
+    if (!gCfgRuntimeEval) { CGMLog(@"runtime evalString hook disabled by config"); return; }
+    if (__sync_fetch_and_add(&gRuntimeEvalHookInstalled, 0) != 0) { return; }
+
+    if (!gMSHookFunction) {
+        gMSHookFunction = (MSHookFunctionPtr)dlsym(RTLD_DEFAULT, "MSHookFunction");
+        if (!gMSHookFunction) {
+            CGMDlopenTweakLibs();
+            gMSHookFunction = (MSHookFunctionPtr)dlsym(RTLD_DEFAULT, "MSHookFunction");
+        }
+    }
+    if (!gMSHookFunction) { CGMLog(@"MSHookFunction unavailable -> runtime evalString hook skipped"); return; }
+
+    const struct mach_header *mh = CGMMainMachHeader();
+    if (!mh) { CGMLog(@"main Mach-O header not found -> runtime evalString hook skipped"); return; }
+
+    void *target = (void *)((uintptr_t)mh + kCGMEvalStringOffset12602);
+    gMSHookFunction(target, (void *)CGMEvalString12602, (void **)&gOrigEvalString12602);
+    if (gOrigEvalString12602) {
+        __sync_bool_compare_and_swap(&gRuntimeEvalHookInstalled, 0, 1);
+        CGMLog(@"runtime evalString hook installed target=%p offset=0x%lx", target, (unsigned long)kCGMEvalStringOffset12602);
+    } else {
+        CGMLog(@"runtime evalString hook attempted but original pointer is NULL target=%p", target);
+    }
 }
 
 /* ============================== bridge ==================================== */
@@ -1505,6 +1599,7 @@ static void CGMLoad(void) {
         }
         if (gCfgObjc) { CGMInstallObjCHooks(); } else { CGMLog(@"ObjC hooks disabled by config"); }
         CGMInstallPOSIXHooks();
+        CGMInstallRuntimeEvalHook();
         CGMLog(@"target script: %@", CGMSourcePath() ?: @"<not found in bundle>");
 
         /* Primary trigger plus a fallback in case the notification was already

@@ -202,6 +202,29 @@ Needed static follow-up:
 4. Keep Level A as a low-risk diagnostic/fallback.
 5. Only use Level C if Level B cannot run early enough for module patching.
 
+## Implemented skeleton
+
+`src/CookingGoMod.m` now has a default-off runtime hook base:
+
+```text
+rt=0 default in packaging/CookingGoMod.cfg
+rt=1 enables CGMInstallRuntimeEvalHook()
+target = main_mach_header + 0x1c28a48
+replacement = CGMEvalString12602
+payload file name = CookingGoMod.bootstrap.js
+payload guard = gRuntimeEvalPayloadDone + gRuntimeEvalReentry
+```
+
+Important behavior:
+
+- default `rt=0` preserves the existing 1.25.03 and 1.3.1 behavior;
+- hook installation is attempted only after config load and mailbox/bootstrap file write;
+- the replacement calls the original eval first, then evals `CGMBootstrap.js` once;
+- `CGMBootstrap.js` already handles early execution by polling/binding until `window.__require("Manager")` is ready;
+- keep `rt=0` while the base 1.26.02 app still dies in dyld/library validation.
+
+The C++ ABI remains marked experimental until IDA/r2 confirms callers around `0x101c28a48`.
+
 ## Verification target after implementation
 
 Inside the app container:

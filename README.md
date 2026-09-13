@@ -1,6 +1,6 @@
 # CookingGo Mod — Cooking GO 1.25.03/1.26.02
 
-iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.1**
+iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.2**
 
 * Install: `/var/jb/usr/lib/TweakInject/CookingGoMod.dylib` (+ `.plist`, `.cfg`, `.bootstrap.js`)
 * Bundle filter: `com.airplanecooking.chef.kitchen.restaurant.diner`
@@ -80,6 +80,7 @@ panel=0    open the panel at launch
 rot=0      overlay rotation; game and overlay are both landscape, so 0
 vlog=0     mirror native diagnostics into the on-screen log; 0 = results only
 iap=0      seed monthly-card/IAP hook state; default off, panel can toggle runtime state
+rt=0       experimental 1.26.02 ScriptEngine::evalString runtime bootstrap hook; default off
 ```
 
 ## Bridge (inside the app sandbox)
@@ -150,7 +151,7 @@ Full notes: `docs/CRASH-TRIAGE-12602.md`, `docs/SIGNING-FIX-12602.md`, and `docs
 
 Verdict: the immediate crash root is signing/library-validation/dyld loading state of the installed 1.26.02 app bundle. The mod DEB static closure is clean; do not write the live `index.jsc` while this dyld issue is unresolved.
 
-## 1.3.1 月卡/IAP Hook + 1.26.02 encrypted JSC
+## 1.3.1/1.3.2 月卡/IAP Hook + 1.26.02 encrypted JSC/runtime hook
 
 - 新增独立运行期开关：面板按钮 `内购:关/开`，状态持久化到 `<container>/Documents/cookingmod/iap_hook.json`。
 - 新增按钮 `免费月卡`：直接触发已定位的月卡发放链路 `Manager.VipCard.setPlayerVipDataByGiftId(...)`，随后 `saveVipCardData(false)` 并刷新相关 UI event。
@@ -161,9 +162,10 @@ Verdict: the immediate crash root is signing/library-validation/dyld loading sta
 验证文件：`state.json` 会增加 `iapHook`、`iapHookInstalledPay`、`iapHookInstalledIOS`、`vip` 字段；`probe.json` 会增加 `hasPay`、`hasYiFaniOS`、`vip`。
 
 - 1.26.02 support: package carries `CookingGoMod.index12602.jsc` for static verification. `postinst` only verifies/backs up/reports the supported original JSC and leaves the live app bundle unchanged.
+- Added default-off runtime evalString hook skeleton: `rt=1` hooks the 1.26.02 candidate at image-base offset `0x1c28a48` and evals `CookingGoMod.bootstrap.js` once after the original script evaluation. Keep `rt=0` until the base game signing issue is fixed.
 
 
-## 1.3.1 静态闭环验证
+## 1.3.1/1.3.2 静态闭环验证
 
 - 新 IPA SHA-256：`8fd0e3a5259f8561773fb6a60db5aaf21c57ab44df1487b9981018f865057710`。
 - `1.26.02` 的 `scriptBundle/config.json` 为 `encrypted:true`，运行时脚本是 `index.jsc`；不再尝试把 JS 文本追加到 `index.jsc`。
