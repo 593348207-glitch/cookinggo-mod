@@ -1,6 +1,6 @@
 # CookingGo Mod — Cooking GO 1.25.03/1.26.02
 
-iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.6**
+iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.7**
 
 * Install: `/var/jb/usr/lib/TweakInject/CookingGoMod.dylib` (+ `.plist`, `.cfg`, `.bootstrap.js`)
 * Bundle filter: `com.airplanecooking.chef.kitchen.restaurant.diner`
@@ -162,6 +162,11 @@ Full notes: `docs/CRASH-TRIAGE-12602.md`, `docs/SIGNING-FIX-12602.md`, and `docs
 
 Verdict: the immediate crash root is signing/library-validation/dyld loading state of the installed 1.26.02 app bundle. The mod DEB static closure is clean; do not write the live `index.jsc` while this dyld issue is unresolved.
 
+
+## 1.3.7 fresh probe and strict JS-handshake gate
+
+- JS now refreshes `probe.json` once after the first successful `Manager` bind, so the probe no longer remains stuck at the earliest pre-`__require` runtime-injection state.
+- `tools/postfix_verify_12602.py` now requires real `js_hello.json` plus `state.json.ready === true` for the `rt=1` gate. A native hook marker alone is no longer accepted as success.
 
 ## 1.3.6 receipt-gated runtime bootstrap retry
 

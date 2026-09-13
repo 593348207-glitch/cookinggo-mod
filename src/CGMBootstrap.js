@@ -15,7 +15,7 @@
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
 ;(function cookingModBootstrapEntry() {
-  var VERSION = "1.3.6";
+  var VERSION = "1.3.7";
   var TAG = "[CookingMod]";
 
   function log(s) {
@@ -528,6 +528,7 @@
   /* ---------------- main loop --------------------------------------------- */
   var lastSeq = -1;
   var ticks = 0;
+  var probedAfterBind = false;
 
   function tick() {
     ticks++;
@@ -536,6 +537,11 @@
         installIapHook();
         var st = snapshot();
         if (st) { writeJson(DIR + "state.json", st); }
+        if (!probedAfterBind) {
+          probedAfterBind = true;
+          probe();
+          log("probe refreshed after bind");
+        }
         var cmd = readJson(DIR + "cmd.json");
         if (cmd && typeof cmd.seq === "number" && cmd.seq !== lastSeq) {
           lastSeq = cmd.seq;

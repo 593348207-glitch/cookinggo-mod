@@ -172,6 +172,8 @@ test('discovers first mailbox, writes hello/probe/state, and keeps IAP disabled 
   assert.equal(state.iapHook, 0);
   assert.equal(probe.managerDefault, true);
   assert.equal(probe.hasPay, true);
+  assert.equal(probe.state.ready, true);
+  assert.equal(probe.bindWhy, 'ok');
 });
 
 test('falls back to ../cookingmod when first candidate cannot be written', () => {
