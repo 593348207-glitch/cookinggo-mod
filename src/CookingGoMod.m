@@ -561,16 +561,33 @@ static void CGMRequestProbe(void) {
                  [gChosenMailbox stringByAppendingPathComponent:@"probe_cmd.json"]);
 }/* ============================== UI ======================================== */
 
-static NSString * const kCGMResKeys[]  = { @"gem", @"coin", @"power", @"adcoupon" };
-static NSString * const kCGMResNames[] = { @"钻石", @"金币", @"燃油", @"免广告券" };
-static const int kCGMResCount = 4;
+/* Keys must match the resource names in src/CGMBootstrap.js.
+   Segment titles are kept to three characters so five of them still fit the
+   340pt panel width. */
+static NSString * const kCGMResKeys[]  = { @"gem", @"coin", @"power", @"adcoupon", @"cloth" };
+static NSString * const kCGMResNames[] = { @"钻石", @"金币", @"燃油", @"广告券", @"换装币" };
+static const int kCGMResCount = 5;
 
 @interface CGMWindow : UIWindow
 @end
 
 @implementation CGMWindow
+- (void)sendEvent:(UIEvent *)event {
+    /* Any touch that makes it into this window is logged once, so a missing
+       drag can be told apart from touches never arriving at all. */
+    for (UITouch *t in event.allTouches) {
+        if (t.phase == UITouchPhaseBegan) {
+            CGMLog(@"window touch began at %.0f,%.0f (type=%ld)",
+                   [t locationInView:self].x, [t locationInView:self].y, (long)t.type);
+        }
+    }
+    [super sendEvent:event];
+}
+
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *v = [super hitTest:point withEvent:event];
+    /* Return nil for the bare window/root so the game keeps receiving input
+       everywhere the overlay has no control. */
     if (v == self || v == self.rootViewController.view) { return nil; }
     return v;
 }
@@ -761,7 +778,13 @@ static const int kCGMResCount = 4;
     self.closeButton.titleLabel.font = [UIFont boldSystemFontOfSize:16.0];
     [self.header addSubview:self.closeButton];
 
-    self.resSeg = [[UISegmentedControl alloc] initWithItems:@[kCGMResNames[0], kCGMResNames[1], kCGMResNames[2], kCGMResNames[3]]];
+    {
+        NSMutableArray *titles = [NSMutableArray array];
+        for (int i = 0; i < kCGMResCount; i++) { [titles addObject:kCGMResNames[i]]; }
+        self.resSeg = [[UISegmentedControl alloc] initWithItems:titles];
+        if (@available(iOS 13.0, *)) { self.resSeg.apportionsSegmentWidthsByContent = NO; }
+        self.resSeg.titleTextAttributes = @{ NSFontAttributeName: [UIFont boldSystemFontOfSize:12.0] };
+    }
     self.resSeg.selectedSegmentIndex = 0;
     if (@available(iOS 13.0, *)) {
         self.resSeg.selectedSegmentTintColor = [UIColor colorWithRed:0.10 green:0.50 blue:0.85 alpha:1.0];

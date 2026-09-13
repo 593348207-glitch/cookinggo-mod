@@ -15,7 +15,7 @@
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
 ;(function () {
-  var VERSION = "1.0.9";
+  var VERSION = "1.1.0";
   var TAG = "[CookingMod]";
 
   function log(s) {
@@ -113,7 +113,11 @@
     return true;
   }
 
-  var EPropID_AdCoupon = 57;   /* ServerConst.EPropID.AdCoupon */
+  /* ServerConst.EPropID (verified in scriptBundle/index.js):
+       45 = ClothNum  -> PlayerData.clothingCionNum  (换装币)
+       57 = AdCoupon  -> PlayerData.adCouponNum      (免广告券)            */
+  var EPropID_ClothNum = 45;
+  var EPropID_AdCoupon = 57;
 
   function table() {
     var E = APP.EVENT_ID;
@@ -150,6 +154,18 @@
         emit: function () {
           try { CORE.Event.emit(E.UPDATE_AD_COUPON, PD.adCouponNum); } catch (e) {}
           try { CORE.Event.emit(E.UPDATE_PROP_NUM, EPropID_AdCoupon, PD.adCouponNum); } catch (e) {}
+        }
+      },
+      cloth: {
+        label: "\u6362\u88c5\u5e01",
+        /* PlayerData.clothingCionNum is a getter over
+           getPropNum(EPropID.ClothNum)[EIdIdx.val]; there is no setter,
+           so writes go through setPropNum like the ad coupon. */
+        get: function () { return PD.clothingCionNum; },
+        set: function (v) { PD.setPropNum(EPropID_ClothNum, v); },
+        emit: function () {
+          try { CORE.Event.emit(E.UPDATE_CLOTHINGCOIN, PD.clothingCionNum); } catch (e) {}
+          try { CORE.Event.emit(E.UPDATE_PROP_NUM, EPropID_ClothNum, PD.clothingCionNum); } catch (e) {}
         }
       }
     };
