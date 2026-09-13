@@ -257,6 +257,14 @@ static NSString *CGMSourcePath(void) {
     return gSourcePath;
 }
 
+static BOOL CGMRuntimeJSReceiptSeen(void) {
+    if (!gMailboxPath.length) { return NO; }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    return [fm fileExistsAtPath:[gMailboxPath stringByAppendingPathComponent:@"js_hello.json"]] ||
+           [fm fileExistsAtPath:[gMailboxPath stringByAppendingPathComponent:@"state.json"]] ||
+           [fm fileExistsAtPath:[gMailboxPath stringByAppendingPathComponent:@"probe.json"]];
+}
+
 static BOOL CGMIsTargetPath(NSString *path) {
     if (![path isKindOfClass:[NSString class]] || path.length < 8) { return NO; }
     if ([path rangeOfString:@"scriptBundle/index.js"].location != NSNotFound) { return YES; }
@@ -555,6 +563,7 @@ static void *gLastScriptEngine12602 = NULL;
 static volatile int gRuntimeEvalHookInstalled = 0;
 static volatile int gRuntimeEvalPayloadDone = 0;
 static volatile int gRuntimeEvalReentry = 0;
+static volatile int gRuntimeEvalAttempts = 0;
 
 static const struct mach_header *CGMMainMachHeader(void) {
     uint32_t count = _dyld_image_count();
@@ -570,6 +579,10 @@ static const struct mach_header *CGMMainMachHeader(void) {
 
 static BOOL CGMRuntimeEvalShouldInject(const char *script, const char *filename) {
     if (!gJSPayload.length) { return NO; }
+    if (CGMRuntimeJSReceiptSeen()) {
+        __sync_bool_compare_and_swap(&gRuntimeEvalPayloadDone, 0, 1);
+        return NO;
+    }
     if (__sync_fetch_and_add(&gRuntimeEvalPayloadDone, 0) != 0) { return NO; }
     if (__sync_fetch_and_add(&gRuntimeEvalReentry, 0) != 0) { return NO; }
     if (filename && strstr(filename, "CookingGoMod.bootstrap.js")) { return NO; }
@@ -586,12 +599,22 @@ static bool CGMRuntimeEvalBootstrap(void *engine, const char *reason) {
         NSData *payloadData = [gJSPayload dataUsingEncoding:NSUTF8StringEncoding];
         const char *payload = (const char *)payloadData.bytes;
         long payloadLen = (long)payloadData.length;
+        int attempt = __sync_add_and_fetch(&gRuntimeEvalAttempts, 1);
         if (gOrigEvalString12602 && payload && payloadLen > 0) {
             injectedOk = gOrigEvalString12602(engine, payload, payloadLen, NULL, "CookingGoMod.bootstrap.js");
         }
-        if (injectedOk) { __sync_bool_compare_and_swap(&gRuntimeEvalPayloadDone, 0, 1); }
-        CGMLog(@"runtime evalString bootstrap %@ reason=%s engine=%p",
-               injectedOk ? @"OK" : @"FAILED", reason ? reason : "<null>", engine);
+        BOOL receiptNow = CGMRuntimeJSReceiptSeen();
+        if (receiptNow) { __sync_bool_compare_and_swap(&gRuntimeEvalPayloadDone, 0, 1); }
+        CGMLog(@"runtime evalString bootstrap %@ reason=%s engine=%p attempt=%d receipt=%d",
+               injectedOk ? @"OK" : @"FAILED", reason ? reason : "<null>", engine, attempt, receiptNow ? 1 : 0);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            BOOL receiptLate = CGMRuntimeJSReceiptSeen();
+            if (receiptLate) { __sync_bool_compare_and_swap(&gRuntimeEvalPayloadDone, 0, 1); }
+            else if (__sync_fetch_and_add(&gRuntimeEvalPayloadDone, 0) == 0) {
+                CGMLog(@"runtime evalString bootstrap receipt pending after attempt=%d reason=%s", attempt, reason ? reason : "<null>");
+            }
+        });
     } @catch (NSException *e) {
         CGMLog(@"runtime evalString bootstrap exception reason=%s: %@", reason ? reason : "<null>", e);
     }

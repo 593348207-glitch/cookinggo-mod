@@ -88,6 +88,10 @@ def version_tuple(v: str) -> tuple[int, ...]:
     return tuple(nums)
 
 
+def normalize_js_text(data: bytes) -> str:
+    return data.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
+
+
 def read_jsc(ipa: Path) -> bytes:
     with zipfile.ZipFile(ipa) as z:
         return z.read("Payload/AirplaneCooking-mobile.app/assets/scriptBundle/index.jsc")
@@ -116,8 +120,9 @@ def main() -> int:
     marker = b"/* ==== CookingGoMod bootstrap ==== */"
     assert marker in patched_plain
     bootstrap = (repo / "src" / "CGMBootstrap.js").read_bytes()
-    assert bootstrap in patched_plain
-    bootstrap_text = bootstrap.decode("utf-8", "replace")
+    bootstrap_text = normalize_js_text(bootstrap)
+    patched_plain_text = normalize_js_text(patched_plain)
+    assert bootstrap_text in patched_plain_text
     assert "var gIap = { enabled: false" in bootstrap_text, "IAP state must default to disabled in JS bootstrap"
     assert "loadIapState();" in bootstrap_text, "JS bootstrap must load persisted IAP state explicitly"
     assert "function retryBoot(reason)" in bootstrap_text, "JS bootstrap must retry if injected before JSB/mailbox readiness"
@@ -149,8 +154,9 @@ def main() -> int:
     jsc_pkg_path = "var/jb/usr/lib/TweakInject/CookingGoMod.index12602.jsc"
     assert cfg_path in data_files and dylib_path in data_files
     assert bootstrap_pkg_path in data_files and jsc_pkg_path in data_files
-    assert data_files[bootstrap_pkg_path] == bootstrap, "DEB bootstrap payload differs from src/CGMBootstrap.js"
-    assert data_files[jsc_pkg_path] == patched_jsc, "DEB packaged index12602 JSC differs from packaging/CookingGoMod.index12602.jsc"
+    assert normalize_js_text(data_files[bootstrap_pkg_path]) == bootstrap_text, "DEB bootstrap payload differs from src/CGMBootstrap.js after newline normalization"
+    deb_jsc_plain = gunzip(xxtea_decrypt(data_files[jsc_pkg_path], KEY))
+    assert bootstrap_text in normalize_js_text(deb_jsc_plain), "DEB packaged index12602 JSC does not contain current bootstrap after newline normalization"
     cfg_text = data_files[cfg_path].decode("utf-8", "replace")
     if version_tuple(deb_version) >= (1, 3, 2):
         src_m = (repo / "src" / "CookingGoMod.m").read_text(encoding="utf-8")

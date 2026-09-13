@@ -1,6 +1,6 @@
 Package: com.seagull.cookinggomod
 Name: CookingGo Mod
-Version: 1.3.5
+Version: 1.3.6
 Architecture: iphoneos-arm64
 Description: Cooking GO 1.25.03/1.26.02 资源修改（钻石/金币/燃油/免广告券/换装币）+ 独立月卡/IAP Hook 开关，悬浮窗可拖动，支持 + 与 = 两种写入。
 Maintainer: seagull

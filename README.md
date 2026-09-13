@@ -1,6 +1,6 @@
 # CookingGo Mod — Cooking GO 1.25.03/1.26.02
 
-iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.5**
+iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.6**
 
 * Install: `/var/jb/usr/lib/TweakInject/CookingGoMod.dylib` (+ `.plist`, `.cfg`, `.bootstrap.js`)
 * Bundle filter: `com.airplanecooking.chef.kitchen.restaurant.diner`
@@ -162,6 +162,11 @@ Full notes: `docs/CRASH-TRIAGE-12602.md`, `docs/SIGNING-FIX-12602.md`, and `docs
 
 Verdict: the immediate crash root is signing/library-validation/dyld loading state of the installed 1.26.02 app bundle. The mod DEB static closure is clean; do not write the live `index.jsc` while this dyld issue is unresolved.
 
+
+## 1.3.6 receipt-gated runtime bootstrap retry
+
+- Native runtime injection no longer treats `evalString(...) == true` as proof that the bootstrap executed. `gRuntimeEvalPayloadDone` is set only after a JS mailbox receipt (`js_hello.json`, `state.json`, or `probe.json`) is observed.
+- Scheduled `ScriptEngine::getInstance` retries now continue when `evalString` returns OK but no receipt appears, and logs `attempt` plus `receipt` state for each injection attempt.
 
 ## 1.3.5 runtime bootstrap retry fix
 
