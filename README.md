@@ -144,6 +144,14 @@ python F:\测试\cookingGO\github-cookinggo-mod\tools\macho_string_xrefs.py --ip
 python F:\测试\cookingGO\github-cookinggo-mod\tools\postfix_verify_12602.py --mcp F:\测试\cookingGO\mcp.py --out F:\测试\cookingGO\_work\postfix_verify.json
 ```
 
+Windows PowerShell wrapper（默认路径从脚本位置推导，避免中文路径字面量编码问题）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File F:\测试\cookingGO\github-cookinggo-mod\tools\run_postfix_verify_12602.ps1 `
+  -Seconds 18 `
+  -Out F:\测试\cookingGO\_work\postfix_verify_wrapper.json
+```
+
 Fix helper for macOS recursive re-signing:
 
 ```bash

@@ -182,6 +182,11 @@ def mailbox_path(app_info: dict[str, Any]) -> str:
     return data.rstrip("/") + "/Documents/cookingmod"
 
 
+def package_installed(mcp: Any, package_id: str) -> bool:
+    r = run_cmd(mcp, f"dpkg -s {sh_quote(package_id)} >/dev/null 2>&1 && echo installed || true", 10)
+    return "installed" in r.get("output", "")
+
+
 def collect_tweak_state(mcp: Any, app_info: dict[str, Any], cfg_path: str) -> dict[str, Any]:
     box = {"cfg": run_cmd(mcp, f"cat {sh_quote(cfg_path)} 2>&1", 10)}
     mb = mailbox_path(app_info)
@@ -278,39 +283,44 @@ def main() -> int:
 
         app_info_after = call(mcp, "get_app_info", {"bundle_id": ns.bundle_id})
         report["app_info_after_deb"] = app_info_after
+        installed = package_installed(mcp, ns.package_id)
+        report["package_installed"] = installed
 
-        # rt=0 default smoke.
-        set_rt_in_cfg(mcp, ns.cfg_path, False)
-        report["rt0_cfg_written"] = True
-        call(mcp, "kill_app", {"bundle_id": ns.bundle_id})
-        time.sleep(1)
-        rt0_launch = capture_launch(mcp, ns.bundle_id, ns.seconds, ns.max_lines)
-        report["rt0_launch"] = rt0_launch
-        rt0_state = collect_tweak_state(mcp, app_info_after, ns.cfg_path)
-        report["rt0_state"] = rt0_state
-        rt0_ok, rt0_msg = verdict_rt(rt0_state, False)
-        report["rt0_gate"] = {"ok": rt0_ok, "message": rt0_msg}
-        if not rt0_ok or rt0_launch["has_library_validation_failure"] or rt0_launch["has_dyld_exit"]:
-            code = 3
-            report["final"] = "STOP: rt=0 tweak smoke gate failed; rt=1 skipped"
-        elif ns.enable_rt:
-            set_rt_in_cfg(mcp, ns.cfg_path, True)
-            report["rt1_cfg_written"] = True
+        if not installed and not ns.install_deb:
+            report["final"] = "PASS: base launch gate passed; DEB not installed/requested, tweak gates skipped"
+        else:
+            # rt=0 default smoke. Only write cfg after DEB is known/requested present.
+            set_rt_in_cfg(mcp, ns.cfg_path, False)
+            report["rt0_cfg_written"] = True
             call(mcp, "kill_app", {"bundle_id": ns.bundle_id})
             time.sleep(1)
-            rt1_launch = capture_launch(mcp, ns.bundle_id, ns.seconds, ns.max_lines)
-            report["rt1_launch"] = rt1_launch
-            rt1_state = collect_tweak_state(mcp, app_info_after, ns.cfg_path)
-            report["rt1_state"] = rt1_state
-            rt1_ok, rt1_msg = verdict_rt(rt1_state, True)
-            report["rt1_gate"] = {"ok": rt1_ok, "message": rt1_msg}
-            if not rt1_ok or rt1_launch["has_library_validation_failure"] or rt1_launch["has_dyld_exit"]:
-                code = 4
-                report["final"] = "rt=1 runtime hook needs attention"
+            rt0_launch = capture_launch(mcp, ns.bundle_id, ns.seconds, ns.max_lines)
+            report["rt0_launch"] = rt0_launch
+            rt0_state = collect_tweak_state(mcp, app_info_after, ns.cfg_path)
+            report["rt0_state"] = rt0_state
+            rt0_ok, rt0_msg = verdict_rt(rt0_state, False)
+            report["rt0_gate"] = {"ok": rt0_ok, "message": rt0_msg}
+            if not rt0_ok or rt0_launch["has_library_validation_failure"] or rt0_launch["has_dyld_exit"]:
+                code = 3
+                report["final"] = "STOP: rt=0 tweak smoke gate failed; rt=1 skipped"
+            elif ns.enable_rt:
+                set_rt_in_cfg(mcp, ns.cfg_path, True)
+                report["rt1_cfg_written"] = True
+                call(mcp, "kill_app", {"bundle_id": ns.bundle_id})
+                time.sleep(1)
+                rt1_launch = capture_launch(mcp, ns.bundle_id, ns.seconds, ns.max_lines)
+                report["rt1_launch"] = rt1_launch
+                rt1_state = collect_tweak_state(mcp, app_info_after, ns.cfg_path)
+                report["rt1_state"] = rt1_state
+                rt1_ok, rt1_msg = verdict_rt(rt1_state, True)
+                report["rt1_gate"] = {"ok": rt1_ok, "message": rt1_msg}
+                if not rt1_ok or rt1_launch["has_library_validation_failure"] or rt1_launch["has_dyld_exit"]:
+                    code = 4
+                    report["final"] = "rt=1 runtime hook needs attention"
+                else:
+                    report["final"] = "PASS: base + DEB + rt=1 runtime hook gates passed"
             else:
-                report["final"] = "PASS: base + DEB + rt=1 runtime hook gates passed"
-        else:
-            report["final"] = "PASS: base + rt=0 gates passed; rt=1 not requested"
+                report["final"] = "PASS: base + rt=0 gates passed; rt=1 not requested"
 
     text = json.dumps(report, ensure_ascii=False, indent=2)
     if ns.out:
