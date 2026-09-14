@@ -880,6 +880,7 @@ static const int kCGMResCount = 5;
 @property (nonatomic, strong) UIButton *probeButton;
 @property (nonatomic, strong) UIButton *iapToggleButton;
 @property (nonatomic, strong) UIButton *vipCardButton;
+@property (nonatomic, strong) UIButton *richesSimButton;
 @property (nonatomic, strong) UITextView *logView;
 @property (nonatomic, assign) BOOL panelVisible;
 @property (nonatomic, assign) CGPoint ballCenter;
