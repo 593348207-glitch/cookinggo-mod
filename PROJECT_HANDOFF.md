@@ -112,6 +112,13 @@ F:\测试\cookingGO\
 - 不包含真实 StoreKit 交易，未创建真实订单；`res.json` 目前已被冷启动清理，状态证据以 fresh `state.json` 和 `mod.log` 为准。
 
 
+## 2026-09-14 项目缓存清理
+
+- 用户确认 `1.4.1` 礼包测试有效后，清理了 `F:\测试\cookingGO` 下的历史构建和分析垃圾。
+- 保留：主仓库 `github-cookinggo-mod`、原始 `Cooking Go_1.26.02.ipa`、最新正式包 `dist\com.seagull.cookinggomod_1.4.1_iphoneos-arm64.deb`、根目录 `PROJECT_HANDOFF.md`、`mcp_65.py`、`_work\package-chain-141-fresh.json`、`_work\package-chain-141-target100-state.json`。
+- 已删除：旧 `1.25.03` IPA、旧版本 DEB、`_extract` 解包目录、`_work` 历史报告/解密缓存、历史 `mod` 同步副本、根目录 scratch Python、旧截图、旧 HANDOFF、旧 MCP client/session cache，以及仓库/根目录 `__pycache__`。
+- 当前 `_work` 仅保留两份 `package-chain-141` 最新证据；后续如需重建分析缓存，使用仓库工具从原始 IPA 重新生成。
+
 ## 9. 不能改动 / 需要注意的约束
 
 - 不把 JS receipt 当唯一成功条件；不得无限显示“等待 JS 回执”。
