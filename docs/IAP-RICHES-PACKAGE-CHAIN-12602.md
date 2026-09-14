@@ -96,7 +96,33 @@ Track 2: 21.99 USD -> beginTime3
 }
 ```
 
-Native 面板新增 `礼包测试` 按钮。按钮只写上述 `purchase_sim` local-only mailbox 命令，金额固定为已确认的 `0.99 USD`，并生成新的本地 orderId；它不是 Store 购买按钮。
+Native 面板新增 `礼包100` 按钮。按钮写入 `purchase_sim` local-only mailbox 命令，使用 `targetPayTotal: 100.00`，只补齐当前账号到目标额度的差额；重复点击不会继续膨胀 `payTotal`。它不是 Store 购买按钮。
+
+## 100 USD 目标额度与末档加赠
+
+```json
+{
+  "res": "purchase_sim",
+  "action": "success",
+  "value": 100.0,
+  "targetPayTotal": 100.0,
+  "orderId": "local-r100",
+  "localOnly": true,
+  "sessionGen": 1
+}
+```
+
+达到 `100.00 USD` 后，海外阈值 `0.99 / 5.99 / 21.99` 的三个财富日历 Track 均解锁。静态代码确认额外加赠不是第四个 `payTotal` 阈值，而是在 `GiftRiches.onClickGet` 领取 Track 2 第 3 天奖励后执行 `getWeekCard()`：
+
+```text
+Riches Track 2 / Day 2 claim
+  -> Activity.getRichesReward(8)
+  -> getWeekCard()
+  -> VipCard.setPlayerVipDataByGiftId(weekPurchaseTbl.ID, true)
+  -> getAward(weekRewardTbl.ID, false)
+```
+
+因此回执中的 `riches.extraBonus.eligible=true` 表示末档领取路径具备加赠资格，`granted=false` 表示仅完成消费额度模拟，没有伪造领取点击。
 
 ## 回归结果
 
@@ -108,7 +134,7 @@ node --check F:\测试\cookingGO\github-cookinggo-mod\tools\mock_cgm_bootstrap.j
 node F:\测试\cookingGO\github-cookinggo-mod\tools\mock_cgm_bootstrap.js
 ```
 
-当前结果：`21/21 tests passed`。
+当前结果：`22/22 tests passed`。
 
 覆盖：
 
@@ -117,10 +143,12 @@ node F:\测试\cookingGO\github-cookinggo-mod\tools\mock_cgm_bootstrap.js
 3. `0.98` 不解锁、累计到 `0.99` 解锁 Track 0；
 4. 绑定 `purchaseId=1001` 的 mock 0.99 row 时价格匹配；
 5. `5.99` 解锁 Track 0/1，累计到 `21.99` 解锁 Track 0/1/2；
-6. 重复 `orderId` 不重复累计；
-7. `saveRichesInfo(false)` 被调用；
-8. A→B→A 账号隔离；
-9. stale `sessionGen` 命令在 mutation 前拒绝。
+6. `targetPayTotal=100` 精确补齐到 100 USD，重复目标点击不继续增加；
+7. 末档 `getWeekCard` 加赠资格被识别，但未伪造领取；
+8. 重复 `orderId` 不重复累计；
+9. `saveRichesInfo(false)` 被调用；
+10. A→B→A 账号隔离；
+11. stale `sessionGen` 命令在 mutation 前拒绝。
 
 ## 下一步接入条件
 

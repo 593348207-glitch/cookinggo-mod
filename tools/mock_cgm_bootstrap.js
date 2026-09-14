@@ -400,6 +400,28 @@ test('5.99 and 21.99 cumulative totals unlock the expected Riches tracks', () =>
   assert.deepEqual([res.riches.track0Unlocked, res.riches.track1Unlocked, res.riches.track2Unlocked], [true, true, true]);
 });
 
+test('targetPayTotal raises the active account to exactly 100 USD and exposes the final Riches bonus eligibility', () => {
+  const h = runBootstrap({ files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  let res = issuePurchase(h, 32, 0, 'target-100', { targetPayTotal: 100.00 });
+  assert.equal(res.ok, true);
+  assert.equal(res.payTotalBefore, 0);
+  assert.equal(res.amount, 100);
+  assert.equal(res.payTotalAfter, 100);
+  assert.deepEqual([res.riches.track0Unlocked, res.riches.track1Unlocked, res.riches.track2Unlocked], [true, true, true]);
+  assert.equal(res.riches.extraBonus.eligible, true);
+  assert.equal(res.riches.extraBonus.granted, false);
+  assert.equal(res.riches.extraBonus.trigger, 'claim Riches track 2 day 2');
+  assert.equal(res.riches.extraBonus.bonusPurchaseId, 86);
+  assert.equal(res.riches.extraBonus.bonusRewardId, 3001);
+
+  res = issuePurchase(h, 33, 0, 'target-100-again', { targetPayTotal: 100.00 });
+  assert.equal(res.ok, true);
+  assert.equal(res.alreadyAtTarget, true);
+  assert.equal(res.amount, 0);
+  assert.equal(res.payTotalAfter, 100);
+  assert.equal(h.managerBundle.PayData.payInfo.length, 1);
+});
+
 test('Riches persistence is called after a simulated purchase and account sessions stay isolated', () => {
   const a = makeManager({ accountId: 'A' });
   const b = makeManager({ accountId: 'B' });

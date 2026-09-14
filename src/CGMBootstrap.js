@@ -15,7 +15,7 @@
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
 ;(function cookingModBootstrapEntry() {
-  var VERSION = "1.3.9";
+  var VERSION = "1.4.0";
   var TAG = "[CookingMod]";
 
   function log(s) {
@@ -460,6 +460,12 @@
   function setPayTotal(value) {
     var ok = false;
     try {
+      /* The real PlayerData exposes a payTotal setter which also persists
+         playerInfo. Use it first, then normalize the backing playerInfo for
+         runtimes/mocks where the setter is absent. */
+      if (PD && typeof PD.payTotal !== "undefined") { PD.payTotal = value; }
+    } catch (e) {}
+    try {
       var gd = G && G.ServerData && G.ServerData.gameData;
       if (gd && gd.playerInfo) { gd.playerInfo.payTotal = value; ok = true; }
     } catch (e) {}
@@ -472,6 +478,27 @@
     return ok;
   }
 
+  function richesExtraBonusInfo(riches) {
+    var gifts = giftRowsByType(RICHES_GIFT_TYPE);
+    var vipGifts = giftRowsByType(24);
+    var finalRiches = gifts.length > 2 ? gifts[2] : null;
+    var vipGift = vipGifts.length > 0 ? vipGifts[0] : null;
+    var finalRewardId = finalRiches && Array.isArray(finalRiches.RewardIds) ? asId(finalRiches.RewardIds[2]) : 0;
+    var bonusPurchaseId = vipGift && Array.isArray(vipGift.PurchaseId) ? asId(vipGift.PurchaseId[0]) : 0;
+    var bonusRewardId = vipGift && Array.isArray(vipGift.RewardIds) ? asId(vipGift.RewardIds[0]) : 0;
+    return {
+      eligible: !!(riches && riches.track2Unlocked && finalRewardId),
+      granted: false,
+      trigger: "claim Riches track 2 day 2",
+      track: 2,
+      day: 2,
+      finalRichesRewardId: finalRewardId,
+      bonusPurchaseId: bonusPurchaseId || null,
+      bonusRewardId: bonusRewardId || null,
+      source: "GiftRiches.onClickGet -> getWeekCard"
+    };
+  }
+
   function refreshRiches(shouldSave) {
     var thresholds = richesThresholds();
     var total = currentPayTotal();
@@ -482,13 +509,16 @@
       for (var i = 0; i < fields.length; i++) {
         if (total >= thresholds.values[i] && !Number(info[fields[i]])) { info[fields[i]] = t; }
       }
+      /* Keep the progress value used by GiftRichesData in sync with payTotal,
+         so opening the calendar immediately after the test reflects 100 USD. */
+      if (Number(info.accumulateNum) < total) { info.accumulateNum = total; }
       if (shouldSave !== false) {
         try {
           if (G.ServerData && typeof G.ServerData.saveRichesInfo === "function") { G.ServerData.saveRichesInfo(false); }
         } catch (e) { log("saveRichesInfo failed: " + str(e)); }
       }
     }
-    return {
+    var result = {
       payTotal: total,
       thresholds: thresholds.values,
       thresholdSource: thresholds.source,
@@ -499,6 +529,8 @@
       track1Unlocked: !!(info && Number(info.beginTime2) > 0),
       track2Unlocked: !!(info && Number(info.beginTime3) > 0)
     };
+    result.extraBonus = richesExtraBonusInfo(result);
+    return result;
   }
 
   function simulatedOrderExists(orderId) {
@@ -517,11 +549,19 @@
     var out = { ok: false, res: "purchase_sim", action: cmd.action || "success", localOnly: true, version: VERSION, sessionGen: gSessionGen, sessionKey: gSessionKey, ts: now() };
     if (cmd.localOnly !== true) { out.error = "purchase_sim requires localOnly=true"; return out; }
     if (!bind()) { out.error = "engine not bound: " + gBindWhy; return out; }
+    var before = currentPayTotal();
+    var target = cmd.targetPayTotal !== undefined ? moneyNum(cmd.targetPayTotal) : null;
+    if (target !== null && (target < 0 || target > 1000)) { out.error = "bad target payTotal"; return out; }
     var amount = cmd.amount !== undefined ? moneyNum(cmd.amount) : moneyNum(cmd.value);
     if (cmd.amountCents !== undefined) { amount = moneyNum(Number(cmd.amountCents) / 100); }
-    if (amount === null || amount <= 0 || amount > 1000) { out.error = "bad purchase amount"; return out; }
+    if (target !== null) {
+      if (target < before) { out.error = "target payTotal is below current payTotal"; out.payTotalBefore = before; return out; }
+      amount = moneyNum(target - before);
+    }
+    if (amount === null || amount < 0 || amount > 1000) { out.error = "bad purchase amount"; return out; }
     var orderId = String(cmd.orderId || ("cgm_local_" + gSessionKey + "_" + cmd.seq));
     out.orderId = orderId;
+    out.targetPayTotal = target;
     if (simulatedOrderExists(orderId)) {
       var duplicate = refreshRiches(true);
       out.ok = true;
@@ -533,7 +573,19 @@
       out.message = "local purchase replay ignored: orderId=" + orderId;
       return out;
     }
-    var before = currentPayTotal();
+    if (amount === 0) {
+      var already = refreshRiches(true);
+      out.ok = true;
+      out.alreadyAtTarget = true;
+      out.amount = 0;
+      out.recorded = false;
+      out.payTotalBefore = before;
+      out.payTotalAfter = already.payTotal;
+      out.riches = already;
+      out.richesTrack0Unlocked = already.track0Unlocked;
+      out.message = "local Riches target already reached; no additional order recorded";
+      return out;
+    }
     var purchaseId = asId(cmd.purchaseId);
     var purchase = purchaseId ? findPurchaseTbl(purchaseId) : null;
     var catalogPrice = purchasePriceOf(purchase);
@@ -561,7 +613,7 @@
         recorded = true;
       }
     } catch (e) {}
-    gSimulatedOrders[orderId] = { amount: amount, purchaseId: purchaseId, ts: now(), sessionGen: gSessionGen };
+    gSimulatedOrders[orderId] = { amount: amount, targetPayTotal: target, purchaseId: purchaseId, ts: now(), sessionGen: gSessionGen };
     var riches = refreshRiches(true);
     out.ok = true;
     out.amount = amount;
@@ -572,7 +624,9 @@
     out.payTotalAfter = riches.payTotal;
     out.riches = riches;
     out.richesTrack0Unlocked = riches.track0Unlocked;
-    out.message = "local purchase simulated; no App Store transaction was created";
+    out.message = target !== null
+      ? "local Riches target simulated; payTotal reached " + riches.payTotal.toFixed(2) + " USD; no App Store transaction was created"
+      : "local purchase simulated; no App Store transaction was created";
     return out;
   }
 

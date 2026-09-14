@@ -133,6 +133,7 @@ def main() -> int:
     assert "default-off Pay wrapper passes purchase calls to original implementation" in harness_text
     assert "purchase-success synthesis path" in harness_text
     assert "purchase_sim" in bootstrap_text and "localOnly=true" in bootstrap_text
+    assert "targetPayTotal" in bootstrap_text and "richesExtraBonusInfo" in bootstrap_text
     assert "iap_catalog" in bootstrap_text and "function iapCatalog()" in bootstrap_text
     static_doc = repo / "docs" / "IAP-RICHES-STATIC-12602.md"
     static_doc_text = static_doc.read_text(encoding="utf-8")
@@ -173,6 +174,8 @@ def main() -> int:
         assert "runtime evalString hook disabled by config" in src_m
         assert "CGMSendLocalRichesPurchase" in src_m
         assert "richesSimTapped" in src_m
+        assert "礼包100" in src_m
+        assert "targetPayTotal" in src_m
         assert b"runtime evalString hook installed" in data_files[dylib_path]
         assert b"bootstrap deferred limit reached" in data_files[dylib_path], "packaged dylib must be rebuilt after JS retry changes"
         assert "candidate_evalString_function_va = 0x101c28a30" in runtime_doc

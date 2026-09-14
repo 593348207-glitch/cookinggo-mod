@@ -39,7 +39,7 @@
 #import "CGMBootstrap.generated.h"
 
 #ifndef CGM_VERSION
-#define CGM_VERSION @"1.3.9"
+#define CGM_VERSION @"1.4.0"
 #endif
 
 static NSString * const kCGMTargetBundle = @"com.airplanecooking.chef.kitchen.restaurant.diner";
@@ -795,10 +795,13 @@ static void CGMSendCommand(NSString *res, NSString *action, long long value) {
 }
 
 static void CGMSendLocalRichesPurchase(void) {
-    NSString *orderId = [NSString stringWithFormat:@"cgm_local_riches_%lld", (long long)([[NSDate date] timeIntervalSince1970] * 1000.0)];
-    CGMSendCommandWithValue(@"purchase_sim", @"success", @0.99, @{
+    NSString *orderId = [NSString stringWithFormat:@"cgm_local_riches_target100_%lld", (long long)([[NSDate date] timeIntervalSince1970] * 1000.0)];
+    /* Target semantics: set the active account's cumulative Riches spend to
+       100.00 USD, charging only the missing delta. Repeated taps do not keep
+       inflating payTotal past the requested target. */
+    CGMSendCommandWithValue(@"purchase_sim", @"success", @100.00, @{
         @"localOnly": @YES,
-        @"amount": @0.99,
+        @"targetPayTotal": @100.00,
         @"orderId": orderId
     });
 }
@@ -1166,7 +1169,7 @@ static const int kCGMResCount = 5;
     self.vipCardButton.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
     [self.panel addSubview:self.vipCardButton];
 
-    self.richesSimButton = [self makeButton:@"礼包测试" color:[UIColor colorWithRed:0.76 green:0.52 blue:0.12 alpha:1.0] action:@selector(richesSimTapped)];
+    self.richesSimButton = [self makeButton:@"礼包100" color:[UIColor colorWithRed:0.76 green:0.52 blue:0.12 alpha:1.0] action:@selector(richesSimTapped)];
     self.richesSimButton.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
     [self.panel addSubview:self.richesSimButton];
 
@@ -1479,7 +1482,7 @@ static const int kCGMResCount = 5;
 }
 
 - (void)richesSimTapped {
-    [self appendLog:@"→ local-only 礼包测试：模拟 0.99 USD 成功，刷新财富日历解锁状态"];
+    [self appendLog:@"→ local-only 礼包测试：累计消费目标 100.00 USD，解锁财富日历三档及末档加赠资格"];
     CGMSendLocalRichesPurchase();
 }
 
