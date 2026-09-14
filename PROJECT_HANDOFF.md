@@ -56,8 +56,8 @@ F:\测试\cookingGO\
 
 ## 6. 重要文件说明
 
-- `F:\测试\cookingGO\github-cookinggo-mod\src\CGMBootstrap.js`：JS 主逻辑；当前工作副本版本字符串为 `1.3.8`。
-- `F:\测试\cookingGO\github-cookinggo-mod\src\CookingGoMod.m`：native tweak、UI、命令/回执、runtime Hook；当前工作副本版本字符串为 `1.3.8`。
+- `F:\测试\cookingGO\github-cookinggo-mod\src\CGMBootstrap.js`：JS 主逻辑；当前工作副本版本字符串为 `1.3.9`。
+- `F:\测试\cookingGO\github-cookinggo-mod\src\CookingGoMod.m`：native tweak、UI、命令/回执、runtime Hook；当前工作副本版本字符串为 `1.3.9`。
 - `F:\测试\cookingGO\github-cookinggo-mod\src\CGMBootstrap.generated.h`：JS 嵌入头，源码变化后必须重新生成。
 - `F:\测试\cookingGO\github-cookinggo-mod\packaging\CookingGoMod.index12602.jsc`：打包 JSC；由 `tools/embed_js.py`、`tools/patch_cocos_jsc.py` 生成。
 - `F:\测试\cookingGO\github-cookinggo-mod\packaging\CookingGoMod.cfg`：当前 `objc=1,posix=0,overlay=1,panel=0,rot=0,vlog=0,iap=0,rt=0`。
@@ -85,6 +85,19 @@ F:\测试\cookingGO\
 5. 运行 `node --check`、mock、`py_compile`、`embed_js.py`、JSC round-trip、`static_verify_12602.py`；然后在 macOS 构建 dylib/DEB。
 6. 新 MCP 设备按顺序验证：注入 → fresh mailbox → 五类资源 → IAP UI → 月卡 → 账号切换 → 重启复测。证据保存到 `F:\测试\cookingGO\_work\`。
 7. 只有所有回归通过后才更新 README、版本号、DEB、SHA-256，并同步 `F:\测试\cookingGO\mod`。
+
+
+## 2026-09-14 1.3.9 礼包链路与真机安装结果
+
+- Commit：`0ba1cd8 Fix local Riches test button declaration`，已推送 `main` 与 `codex/iap-month-card-hook`。
+- GitHub Actions main run：`34848893985`，页面显示完成；正式 DEB：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.9_iphoneos-arm64.deb`。
+- 正式 DEB SHA-256：`7495BF04A261A52C20C3EA7A2697B9D935C72B38E1AFBA5862BE26C74AFE5934`。
+- 设备安装：`dpkg -i` 返回 `exitCode=0`，`dpkg -s` 为 `Status: install ok installed`、`Version: 1.3.9`。安装输出里的旧 postrm 对 live signed `index.jsc` 的回写尝试被系统 `Operation not permitted` 拒绝；postinst 随后按预期保留 live bundle，使用 runtime injection。
+- fresh 真机报告：`F:\测试\cookingGO\_work\package-chain-139-fresh.json`。`base_gate`、`rt0_gate`、`rt1_gate` 均 PASS；`lv=0`、`dyld=0`、无闪退。fresh log 确认 `CookingGoMod v1.3.9`、`runtime evalString hook installed`、`runtime evalString bootstrap OK`；fresh `js_hello/state/probe` 均为 `version=1.3.9`，`state.ready=true`、`sessionGen=1`。
+- 真机 `probe.json` 已读到真实运行时 `iapCatalog`：真实 purchase rows 共 150 条左右，包含 `ID/Price/ProductID/RewardID`；Riches rows 为 `GiftType=28`、`Gift ID 28/31/32`，其中运行时 `PurchaseId[]` 仍需按回执完整读取，不把价格相同商品当作财富日历礼包。
+- local-only 真机命令尚未执行：设备在写入时先处于锁屏，唤醒后 mailbox `cmd.json` 仍因设备侧 `Operation not permitted` 无法写入，未产生 `res.json`，`payTotal` 保持 `0`。没有操作 StoreKit、没有生成真实订单。
+- 本地 mock 已通过 `21/21 tests passed`；静态验证 `static closure: OK`。
+
 
 ## 9. 不能改动 / 需要注意的约束
 
