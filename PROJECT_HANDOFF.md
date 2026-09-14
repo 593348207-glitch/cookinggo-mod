@@ -108,7 +108,7 @@ F:\测试\cookingGO\
 - 本地回归：`22/22 tests passed`；`static closure: OK`。
 - 正式 DEB：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.4.1_iphoneos-arm64.deb`，SHA-256：`40E8FA37E09C1260D18D1402DBAE8997B89C909841897C71B90D6CA5A7CBD78F`。
 - 设备安装：`dpkg Status: install ok installed`、`Version: 1.4.1`；fresh 报告 `F:\测试\cookingGO\_work\package-chain-141-fresh.json`，`base/rt0/rt1 PASS`、`lv=0`、`dyld=0`、无闪退。
-- 设备当前 fresh `state.json`：`version=1.4.1`、`state.ready=true`、`payTotal=100`、`riches.track0/1/2Unlocked=true`、`extraBonus.eligible=true`、`extraBonus.granted=false`。
+- 设备当前 fresh `state.json`：`version=1.4.1`、`state.ready=true`、`payTotal=100`、`riches.track0/1/2Unlocked=true`、`extraBonus.eligible=true`、`extraBonus.granted=false`。证据已保存到 `F:\测试\cookingGO\_work\package-chain-141-target100-state.json`。
 - 不包含真实 StoreKit 交易，未创建真实订单；`res.json` 目前已被冷启动清理，状态证据以 fresh `state.json` 和 `mod.log` 为准。
 
 
