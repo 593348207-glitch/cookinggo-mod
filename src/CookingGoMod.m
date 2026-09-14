@@ -39,7 +39,7 @@
 #import "CGMBootstrap.generated.h"
 
 #ifndef CGM_VERSION
-#define CGM_VERSION @"1.4.0"
+#define CGM_VERSION @"1.4.1"
 #endif
 
 static NSString * const kCGMTargetBundle = @"com.airplanecooking.chef.kitchen.restaurant.diner";

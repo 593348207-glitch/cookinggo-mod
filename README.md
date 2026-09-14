@@ -191,7 +191,7 @@ Verdict: the immediate crash root is signing/library-validation/dyld loading sta
 - `tools/mock_cgm_bootstrap.js` now validates the early-no-`fileUtils` retry path and recovery once JSB becomes available.
 - `tools/static_verify_12602.py` now requires `src/CGMBootstrap.generated.h` and the packaged dylib to contain the retry marker, preventing Windows-only payload repacks from being mistaken for a rebuilt runtime-hook dylib.
 
-## 1.4.0 财富日历 100 USD + 末档加赠资格测试
+## 1.4.1 财富日历 100 USD + 末档加赠资格测试
 
 - `礼包测试` 按钮改为目标额度模式：将当前账号的累计消费提升到**恰好 100.00 USD**，只计入当前 `payTotal` 到目标值之间的差额；重复点击不会继续累加。
 - `purchase_sim` 支持 `targetPayTotal`，并在回执中返回 `payTotalBefore`、`payTotalAfter`、三个财富日历 Track 状态和 `extraBonus` 资格信息。
