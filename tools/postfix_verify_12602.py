@@ -151,6 +151,17 @@ def run_cmd(mcp: Any, command: str, timeout: int = 10) -> dict[str, Any]:
     return r if isinstance(r, dict) else {"exitCode": None, "output": str(r)}
 
 
+def result_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def install_result_failed(value: Any) -> bool:
+    text = result_text(value).lower()
+    return any(token in text for token in ("install failed", "sudo:", "incorrect password", "error"))
+
+
 def read_device_file(mcp: Any, path: str, max_bytes: int = 262144) -> str:
     r = call(mcp, "read_file", {"path": path, "max_bytes": max_bytes})
     if isinstance(r, dict):
@@ -258,16 +269,42 @@ def clear_tweak_runtime_files(mcp: Any, app_info: dict[str, Any]) -> dict[str, A
     return {"cleared": cleared} if cleared else {"skipped": "no mailbox paths found"}
 
 
+def file_output(text: Any) -> dict[str, Any]:
+    if isinstance(text, dict):
+        if text.get("blocked"):
+            return {"exitCode": 1, "output": json.dumps(text, ensure_ascii=False)}
+        if "content" in text:
+            text = text.get("content")
+        elif "output" in text:
+            text = text.get("output")
+    s = "" if text is None else str(text)
+    if "No such file or directory" in s or "Operation not permitted" in s:
+        return {"exitCode": 0, "output": ""}
+    return {"exitCode": 0, "output": s}
+
+
 def collect_tweak_state(mcp: Any, app_info: dict[str, Any], cfg_path: str) -> dict[str, Any]:
-    box = {"cfg": run_cmd(mcp, f"cat {sh_quote(cfg_path)} 2>&1", 10)}
-    paths = discover_mailbox_paths(mcp, app_info)
-    mb = paths[0] if paths else mailbox_path(app_info)
+    # Mailbox lives in the app container. Unprivileged `run_command`/`tail`
+    # gets Operation not permitted and produces false-negative rt0/rt1 gates.
+    # Prefer MCP read_file/list_dir, which fall back to the privileged helper.
+    box = {"cfg": file_output(read_device_file(mcp, cfg_path))}
+    mb = mailbox_path(app_info)
+    paths = [mb] if mb and mb != "/Documents/cookingmod" else []
+    try:
+        for extra in discover_mailbox_paths(mcp, app_info):
+            if extra not in paths:
+                paths.append(extra)
+    except Exception:
+        pass
+    if not paths:
+        paths = [mb]
+    mb = paths[0]
     box["mailbox"] = mb
     box["mailbox_candidates"] = paths
-    box["mailbox_ls"] = run_cmd(mcp, f"ls -la {sh_quote(mb)} 2>&1", 10)
+    listing = call(mcp, "list_dir", {"path": mb})
+    box["mailbox_ls"] = file_output(json.dumps(listing, ensure_ascii=False))
     for name in ["mod.log", "js_hello.json", "probe.json", "state.json", "iap_hook.json"]:
-        p = f"{mb}/{name}"
-        box[name] = run_cmd(mcp, f"test -f {sh_quote(p)} && tail -200 {sh_quote(p)} || true", 10)
+        box[name] = file_output(read_device_file(mcp, f"{mb}/{name}"))
     return box
 
 
@@ -351,10 +388,13 @@ def main() -> int:
         code = 2
     else:
         code = 0
+        install_deb_failed = False
         if ns.install_deb:
             device_deb = upload_local_file(mcp, ns.install_deb)
             report["steps"].append({"uploaded_deb": device_deb})
-            report["steps"].append({"install_deb_result": call(mcp, "install_app", {"path": device_deb})})
+            install_result = call(mcp, "install_app", {"path": device_deb})
+            install_deb_failed = install_result_failed(install_result)
+            report["steps"].append({"install_deb_result": install_result})
             time.sleep(8)
             call(mcp, "wake_and_home", {"sequence": "auto"})
 
@@ -362,8 +402,17 @@ def main() -> int:
         report["app_info_after_deb"] = app_info_after
         installed = package_installed(mcp, ns.package_id)
         report["package_installed"] = installed
+        report["package_install_status"] = {
+            "requested": bool(ns.install_deb),
+            "install_attempt_failed": install_deb_failed,
+            "package_present_after_attempt": installed,
+            "reused_existing_package": bool(ns.install_deb and install_deb_failed and installed),
+        }
 
-        if not installed and not ns.install_deb:
+        if ns.install_deb and install_deb_failed and not installed:
+            report["final"] = "STOP: requested DEB install failed and package is not installed"
+            code = 3
+        elif not installed and not ns.install_deb:
             report["final"] = "PASS: base launch gate passed; DEB not installed/requested, tweak gates skipped"
         else:
             # rt=0 default smoke. Only write cfg after DEB is known/requested present.
@@ -399,7 +448,10 @@ def main() -> int:
                     code = 4
                     report["final"] = "rt=1 runtime hook needs attention"
                 else:
-                    report["final"] = "PASS: base + DEB + rt=1 runtime hook gates passed"
+                    if install_deb_failed:
+                        report["final"] = "PASS: runtime gates passed using existing installed package; requested DEB install failed"
+                    else:
+                        report["final"] = "PASS: base + DEB + rt=1 runtime hook gates passed"
             else:
                 report["final"] = "PASS: base + rt=0 gates passed; rt=1 not requested"
 

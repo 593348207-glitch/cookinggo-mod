@@ -62,3 +62,26 @@ Windows 工作区没有 Xcode/iphoneos SDK/`ldid`，所以本轮的 `-js-test` �
 - 设备报告：`F:\测试\cookingGO\_work\postfix_verify_12602_v138_js_test_current.json`；该报告明确为 `STOP: rt=0 tweak smoke gate failed; fresh tweak load marker not observed`，不能把它记作新版本 PASS。
 
 最终设备验收必须使用 macOS 编译出的正式 1.3.8 dylib/DEB，依次保存 fresh `js_hello.json`、`state.json`、`probe.json`、`res.json`、`mod.log` 与 UI 截图，再执行 A→B→A 账号切换复测。
+
+## 2026-09-14 运行时复测与 verifier 修正
+
+- 真机 fresh runtime 证据：`F:\测试\cookingGO\_work\ctf-lab-12602-138\rt1_after_wipe.json`。
+- 设备：iPhone14,5 / iOS 15.6.1 / rootless；`js_hello.json`、`state.json`、`probe.json` 均为 `version=1.3.8`，`sessionGen=1`、`sessionKey=session-1`，`state.ready=true`。
+- `mod.log` 证据：`09:16:52 +0000` 出现 `runtime evalString hook installed offset=0x1c28a30`，随后 `runtime evalString bootstrap OK reason=hook-hit` 与 `reason=jsb-adapter/jsb-builtin.js`；说明 1.3.8 runtime hook 与 JS handshake 已打通。
+- 面板截图：`F:\测试\cookingGO\_work\ctf-lab-12602-138\04_handshake.jpg`，游戏前台、横屏面板和资源 UI 可见。
+- 特权 mailbox verifier 复测：`F:\测试\cookingGO\_work\postfix_verify_12602_v138_privileged.json`，`base_gate`、`rt0_gate`、`rt1_gate` 全部 `ok=true`。MCP 安装动作因设备侧 `sudo: no password was provided` 返回失败，但设备已有 `com.seagull.cookinggomod 1.3.8`，所以报告明确标记为 `reused_existing_package=true`，不得解释为本次上传包安装成功。
+- 本轮源码补丁：`src/CookingGoMod.m` 的 `CGMRuntimeJSReceiptSeen()` 改为只接受当前 `CGM_VERSION` 的 JSON receipt，并在 constructor 中删除旧版本 `js_hello/state/probe`；解决旧 1.3.7 或 `STAMP-CLEAR` 文件导致 evalString 注入提前短路的问题。
+- 本轮 verifier 补丁：`tools/postfix_verify_12602.py` 改用 MCP `read_file/list_dir` 读取受保护 mailbox，并把 DEB 安装失败、设备已有包、实际 runtime gate 分开记录。
+- 重要边界：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.8_iphoneos-arm64.deb` 仍是当前已生成包；新的 `CookingGoMod.m` receipt 修正尚未进入 dylib，必须在 macOS/Xcode workflow 重编正式 1.3.8 DEB 后再做“旧 receipt 自动清理”真机验收。
+
+### 本轮可复现命令
+
+```powershell
+Set-Location F:\测试\cookingGO\github-cookinggo-mod
+node --check src\CGMBootstrap.js
+node tools\mock_cgm_bootstrap.js
+python -m py_compile tools\postfix_verify_12602.py tools\static_verify_12602.py tools\embed_js.py tools\patch_cocos_jsc.py
+python tools\embed_js.py
+python tools\patch_cocos_jsc.py --input "F:\测试\cookingGO\Cooking Go_1.26.02.ipa" --key "75fa5f0d-2c43-45" --bootstrap src\CGMBootstrap.js --output packaging\CookingGoMod.index12602.jsc --dump-js "F:\测试\cookingGO\_work\CookingGoMod.index12602.patched.js"
+python tools\static_verify_12602.py --ipa "F:\测试\cookingGO\Cooking Go_1.26.02.ipa" --deb "F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.8_iphoneos-arm64.deb" --repo "F:\测试\cookingGO\github-cookinggo-mod"
+```

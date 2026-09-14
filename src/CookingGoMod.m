@@ -257,12 +257,37 @@ static NSString *CGMSourcePath(void) {
     return gSourcePath;
 }
 
+static BOOL CGMRuntimeJSONHasCurrentVersion(NSString *path) {
+    id obj = CGMReadJSON(path);
+    if (![obj isKindOfClass:[NSDictionary class]]) { return NO; }
+    id ver = [(NSDictionary *)obj objectForKey:@"version"];
+    return [ver isKindOfClass:[NSString class]] && [(NSString *)ver isEqualToString:CGM_VERSION];
+}
+
 static BOOL CGMRuntimeJSReceiptSeen(void) {
+    /* File existence is not a handshake. Leftover 1.3.7 / STAMP-CLEAR receipts
+       previously skipped evalString bootstrap entirely. */
     if (!gMailboxPath.length) { return NO; }
+    return CGMRuntimeJSONHasCurrentVersion([gMailboxPath stringByAppendingPathComponent:@"js_hello.json"]) ||
+           CGMRuntimeJSONHasCurrentVersion([gMailboxPath stringByAppendingPathComponent:@"state.json"]) ||
+           CGMRuntimeJSONHasCurrentVersion([gMailboxPath stringByAppendingPathComponent:@"probe.json"]);
+}
+
+static void CGMDiscardStaleRuntimeReceipts(void) {
+    if (!gMailboxPath.length) { return; }
     NSFileManager *fm = [NSFileManager defaultManager];
-    return [fm fileExistsAtPath:[gMailboxPath stringByAppendingPathComponent:@"js_hello.json"]] ||
-           [fm fileExistsAtPath:[gMailboxPath stringByAppendingPathComponent:@"state.json"]] ||
-           [fm fileExistsAtPath:[gMailboxPath stringByAppendingPathComponent:@"probe.json"]];
+    NSArray *names = @[@"js_hello.json", @"state.json", @"probe.json"];
+    for (NSString *name in names) {
+        NSString *path = [gMailboxPath stringByAppendingPathComponent:name];
+        if (![fm fileExistsAtPath:path]) { continue; }
+        if (CGMRuntimeJSONHasCurrentVersion(path)) { continue; }
+        NSError *err = nil;
+        if ([fm removeItemAtPath:path error:&err]) {
+            CGMLog(@"discarded stale runtime receipt %@", name);
+        } else {
+            CGMLog(@"failed to discard stale runtime receipt %@: %@", name, err.localizedDescription);
+        }
+    }
 }
 
 static BOOL CGMIsTargetPath(NSString *path) {
@@ -1725,6 +1750,7 @@ static void CGMLoad(void) {
 
         CGMReadConfig();
         CGMEnsureMailbox();
+        CGMDiscardStaleRuntimeReceipts();
         CGMLog(@"CookingGoMod v%@ loaded (bundle=%@) payload=%lu bytes",
                CGM_VERSION, bid, (unsigned long)gJSPayload.length);
         if (gMailboxPath) {
