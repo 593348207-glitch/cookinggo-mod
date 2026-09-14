@@ -15,7 +15,7 @@
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
 ;(function cookingModBootstrapEntry() {
-  var VERSION = "1.3.7";
+  var VERSION = "1.3.8";
   var TAG = "[CookingMod]";
 
   function log(s) {
@@ -46,8 +46,12 @@
 
   try {
     if (window.__cookingMod && window.__cookingMod.version) {
-      log("bootstrap skipped, already v" + window.__cookingMod.version);
-      return;
+      if (window.__cookingMod.version === VERSION) {
+        log("bootstrap skipped, already v" + window.__cookingMod.version);
+        return;
+      }
+      try { delete window.__cookingMod; } catch (x) {}
+      log("bootstrap version refresh " + window.__cookingMod.version + " -> " + VERSION);
     }
   } catch (e) {}
 
@@ -94,13 +98,103 @@
   try { window.__cookingModBootPending = false; } catch (e) {}
 
   function now() { return (new Date()).getTime(); }
-  writeJson(DIR + "js_hello.json", { version: VERSION, dir: DIR, writable: writable, ts: now() });
+  writeJson(DIR + "js_hello.json", { version: VERSION, dir: DIR, writable: writable, sessionGen: gSessionGen, sessionKey: gSessionKey, ts: now() });
 
   /* ---------------- engine binding ----------------------------------------- */
   var G = null, APP = null, CORE = null, PD = null, MD = null;
+  var gSessionGen = 0;
+  var gSessionKey = "session-0";
+  var gBound = null;
+  var gHookedPay = null, gHookedIOS = null;
+  var lastSeq = -1;
+  var gProbeSeq = 0;
 
   function req(name) {
     try { return window.__require(name); } catch (e) { return null; }
+  }
+
+  function refTag(value) {
+    if (!value || (typeof value !== "object" && typeof value !== "function")) {
+      return String(value || "0");
+    }
+    try {
+      if (!window.__cookingModRefObjects) { window.__cookingModRefObjects = []; }
+      var list = window.__cookingModRefObjects;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].value === value) { return "r" + list[i].id; }
+      }
+      var item = { value: value, id: list.length + 1 };
+      list.push(item);
+      return "r" + item.id;
+    } catch (e) { return "object"; }
+  }
+
+  function identityHint(obj, keys) {
+    if (!obj) { return ""; }
+    for (var i = 0; i < keys.length; i++) {
+      try {
+        var v = obj[keys[i]];
+        if ((typeof v === "string" && v.length > 0) ||
+            (typeof v === "number" && isFinite(v))) {
+          return keys[i] + "=" + String(v);
+        }
+      } catch (e) {}
+    }
+    return "";
+  }
+
+  function sessionFingerprint(mgr, pd) {
+    var info = null, auth = null;
+    try { info = pd && pd.playerInfo; } catch (e) {}
+    try { auth = mgr && (mgr.Auth || mgr.Account || mgr.User); } catch (e) {}
+    var keys = ["uid", "userId", "playerId", "accountId", "roleId", "openId", "openid", "id"];
+    var hint = identityHint(info, keys) || identityHint(auth, keys);
+    return (hint ? hint + "|" : "") + "info:" + refTag(info) + "|auth:" + refTag(auth);
+  }
+
+  function removeFile(path) {
+    try {
+      if (fs && typeof fs.removeFile === "function") { return !!fs.removeFile(path); }
+    } catch (e) {}
+    return false;
+  }
+
+  function restoreHook(target, method) {
+    if (!target) { return; }
+    try {
+      var original = target.__cookingModIapHookOriginal;
+      if (target.__cookingModIapHook && typeof original === "function") { target[method] = original; }
+      delete target.__cookingModIapHook;
+      delete target.__cookingModIapHookOriginal;
+      delete target.__cookingModIapHookWrapper;
+    } catch (e) { log("restore " + method + " hook failed: " + str(e)); }
+  }
+
+  function resetSessionState(reason, refs) {
+    var oldKey = gSessionKey;
+    gSessionGen++;
+    gSessionKey = "session-" + gSessionGen;
+    lastSeq = -1;
+    gProbeSeq = 0;
+    try { window.__cookingModProbeSeq = null; } catch (e) {}
+    restoreHook(gHookedPay, "pay");
+    restoreHook(gHookedIOS, "buyProduct");
+    gHookedPay = null;
+    gHookedIOS = null;
+    if (gIap) {
+      gIap.installedPay = false;
+      gIap.installedIOS = false;
+      gIap.last = "session-rebind:" + gSessionKey;
+    }
+    ["cmd.json", "res.json", "state.json", "probe.json", "probe_cmd.json"].forEach(function (name) {
+      removeFile(DIR + name);
+    });
+    writeJson(DIR + "js_hello.json", {
+      version: VERSION, dir: DIR, sessionGen: gSessionGen, sessionKey: gSessionKey,
+      previousSession: oldKey, reason: reason || "binding changed", ts: now()
+    });
+    if (gIap) { saveIapState(); }
+    log("session rebind " + oldKey + " -> " + gSessionKey + " reason=" + (reason || "binding changed"));
   }
 
   /* Evidence (static analysis + on-device probe, 2026-09-12):
@@ -111,7 +205,6 @@
   var gBindWhy = "not attempted";
 
   function bind() {
-    if (G && PD && MD && APP && CORE) { return true; }
     var m = req("Manager");
     if (!m || !m.default) { gBindWhy = "module Manager missing"; return false; }
     var app = req("AppConst");
@@ -119,7 +212,9 @@
     var core = req("Core");
     if (!core || !core.default) { gBindWhy = "module Core missing"; return false; }
     var mgr = m.default;
-    var pd = mgr.PlayerData, md = mgr.MapData;
+    var pd = null, md = null, pay = null, vip = null, ios = null;
+    try { pd = mgr.PlayerData; md = mgr.MapData; pay = mgr.Pay || null; vip = mgr.VipCard || null; } catch (e) {}
+    try { var iosMod = req("YiFaniOSIAPBridge"); ios = iosMod && iosMod.default || null; } catch (e) {}
     if (!pd) { gBindWhy = "Manager.PlayerData missing"; return false; }
     if (!md) { gBindWhy = "Manager.MapData missing"; return false; }
     try {
@@ -128,9 +223,19 @@
       gBindWhy = "PlayerData.playerInfo threw: " + str(e);
       return false;
     }
+    var fingerprint = sessionFingerprint(mgr, pd);
+    var refs = { mgr: mgr, pd: pd, md: md, pay: pay, vip: vip, ios: ios, fingerprint: fingerprint };
+    var changed = !gBound || gBound.mgr !== refs.mgr || gBound.pd !== refs.pd ||
+      gBound.md !== refs.md || gBound.pay !== refs.pay || gBound.vip !== refs.vip ||
+      gBound.ios !== refs.ios || gBound.fingerprint !== refs.fingerprint;
     G = mgr; APP = app; CORE = core.default; PD = pd; MD = md;
+    if (changed) {
+      resetSessionState(gBound ? "manager/session identity changed" : "initial bind", refs);
+      gBound = refs;
+      installIapHook();
+      log("bound session=" + gSessionKey + " Manager.PlayerData/MapData/Pay/VipCard refreshed");
+    }
     gBindWhy = "ok";
-    log("bound: Manager.PlayerData + EVENT_ID + Core.Event ready");
     return true;
   }
 
@@ -153,6 +258,8 @@
       enabled: !!gIap.enabled,
       installedPay: !!gIap.installedPay,
       installedIOS: !!gIap.installedIOS,
+      sessionGen: gSessionGen,
+      sessionKey: gSessionKey,
       last: gIap.last,
       ts: now(),
       version: VERSION
@@ -263,7 +370,7 @@
   }
 
   function grantVipCardDirect() {
-    var out = { ok: false, res: "vip_card", action: "buy", input: 30, before: null, after: null, ts: now(), version: VERSION };
+    var out = { ok: false, res: "vip_card", action: "buy", input: 30, before: null, after: null, ts: now(), version: VERSION, sessionGen: gSessionGen, sessionKey: gSessionKey };
     if (!bind()) { out.error = "engine not bound: " + gBindWhy; return out; }
     installIapHook();
     out.before = vipSummary();
@@ -317,6 +424,7 @@
     if (!G) { return false; }
     try {
       var pay = G.Pay;
+      if (gHookedPay && gHookedPay !== pay) { restoreHook(gHookedPay, "pay"); gHookedPay = null; gIap.installedPay = false; }
       if (pay && typeof pay.pay === "function" && !pay.__cookingModIapHook) {
         var origPay = pay.pay;
         pay.__cookingModIapHookOriginal = origPay;
@@ -336,14 +444,17 @@
           } catch (e) { log("Pay.pay hook error: " + str(e)); }
           return origPay.apply(this, arguments);
         };
+        pay.__cookingModIapHookWrapper = pay.pay;
+        gHookedPay = pay;
         gIap.installedPay = true;
-        log("IAP hook installed on Manager.Pay.pay");
+        log("IAP hook installed on Manager.Pay.pay session=" + gSessionKey);
       }
     } catch (e) { log("install Pay hook failed: " + str(e)); }
 
     try {
       var iosMod = req("YiFaniOSIAPBridge");
       var ios = iosMod && iosMod.default;
+      if (gHookedIOS && gHookedIOS !== ios) { restoreHook(gHookedIOS, "buyProduct"); gHookedIOS = null; gIap.installedIOS = false; }
       if (ios && typeof ios.buyProduct === "function" && !ios.__cookingModIapHook) {
         var origIOSBuy = ios.buyProduct;
         ios.__cookingModIapHookOriginal = origIOSBuy;
@@ -363,8 +474,10 @@
           } catch (e) { log("iOS bridge hook error: " + str(e)); }
           return origIOSBuy.apply(this, arguments);
         };
+        ios.__cookingModIapHookWrapper = ios.buyProduct;
+        gHookedIOS = ios;
         gIap.installedIOS = true;
-        log("IAP hook installed on YiFaniOSIAPBridge.buyProduct");
+        log("IAP hook installed on YiFaniOSIAPBridge.buyProduct session=" + gSessionKey);
       }
     } catch (e) {}
     return !!(gIap.installedPay || gIap.installedIOS);
@@ -427,7 +540,7 @@
   function snapshot() {
     if (!bind()) { return null; }
     installIapHook();
-    var t = table(), out = { ready: true, ts: now(), version: VERSION, why: gBindWhy };
+    var t = table(), out = { ready: true, ts: now(), version: VERSION, why: gBindWhy, sessionGen: gSessionGen, sessionKey: gSessionKey };
     for (var k in t) {
       try { out[k] = Number(t[k].get()); } catch (e) { out[k] = null; out[k + "_err"] = str(e); }
     }
@@ -449,14 +562,18 @@
   }
 
   function execute(cmd) {
-    var res = { seq: cmd.seq, res: cmd.res, action: cmd.action, input: cmd.value, ts: now(), version: VERSION };
+    var res = { seq: cmd.seq, res: cmd.res, action: cmd.action, input: cmd.value, ts: now(), version: VERSION, sessionGen: gSessionGen, sessionKey: gSessionKey };
+    if (typeof cmd.sessionGen === "number" && cmd.sessionGen !== gSessionGen) {
+      res.ok = false; res.error = "stale command sessionGen=" + cmd.sessionGen + " current=" + gSessionGen; return res;
+    }
     if (cmd.res === "iap_hook") {
+      var iapBefore = !!gIap.enabled;
       gIap.enabled = (cmd.action === "on") || (cmd.action === "toggle" ? !!cmd.value : !!cmd.value);
       if (bind()) { installIapHook(); }
       gIap.last = "toggle:" + (gIap.enabled ? "on" : "off");
       saveIapState();
       res.ok = true;
-      res.before = gIap.enabled ? 0 : 1;
+      res.before = iapBefore ? 1 : 0;
       res.after = gIap.enabled ? 1 : 0;
       res.expr = "iap_hook=" + (gIap.enabled ? "on" : "off");
       res.message = "内购钩子已" + (gIap.enabled ? "开启" : "关闭") + " (Pay=" + (gIap.installedPay ? 1 : 0) + ", iOS=" + (gIap.installedIOS ? 1 : 0) + ")";
@@ -491,7 +608,7 @@
   }
 
   function probe() {
-    var out = { version: VERSION, dir: DIR, ts: now() };
+    var out = { version: VERSION, dir: DIR, ts: now(), sessionGen: gSessionGen, sessionKey: gSessionKey };
     out.typeofRequire = typeof window.__require;
     out.typeofJsb = typeof window.jsb;
     out.typeofCc = typeof window.cc;
@@ -526,7 +643,6 @@
   }
 
   /* ---------------- main loop --------------------------------------------- */
-  var lastSeq = -1;
   var ticks = 0;
   var probedAfterBind = false;
 

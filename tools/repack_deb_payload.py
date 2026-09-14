@@ -104,6 +104,7 @@ def main() -> int:
     ap.add_argument("--output", type=Path, required=True)
     ap.add_argument("--bootstrap", type=Path, required=True)
     ap.add_argument("--jsc", type=Path, required=True)
+    ap.add_argument("--control", type=Path, default=None, help="optional replacement for control file in control.tar.gz")
     ns = ap.parse_args()
 
     replacements = {
@@ -114,6 +115,7 @@ def main() -> int:
     }
     members = read_ar(ns.input)
     replaced = []
+    control_replaced = False
     for m in members:
         if m.name == "data.tar.gz":
             infos, payloads = read_tar_gz(m.data)
@@ -122,7 +124,14 @@ def main() -> int:
                     payloads[name] = replacements[name]
                     replaced.append(name)
             m.data = write_tar_gz(infos, payloads)
-            break
+        elif m.name == "control.tar.gz" and ns.control:
+            infos, payloads = read_tar_gz(m.data)
+            control_bytes = ns.control.read_bytes()
+            for name in list(payloads):
+                if name.lstrip("./") == "control":
+                    payloads[name] = control_bytes
+                    control_replaced = True
+            m.data = write_tar_gz(infos, payloads)
     need = {"var/jb/usr/lib/TweakInject/CookingGoMod.bootstrap.js", "var/jb/usr/lib/TweakInject/CookingGoMod.index12602.jsc"}
     normalized = {x.lstrip("./") for x in replaced}
     missing = sorted(need - normalized)
@@ -130,9 +139,13 @@ def main() -> int:
       raise SystemExit(f"missing target(s) in data.tar.gz: {missing}")
     ns.output.parent.mkdir(parents=True, exist_ok=True)
     write_ar(ns.output, members)
+    if ns.control and not control_replaced:
+      raise SystemExit("missing control file in control.tar.gz")
     print("wrote", ns.output)
     for name in sorted(normalized):
         print("replaced", name)
+    if control_replaced:
+        print("replaced control")
     return 0
 
 if __name__ == "__main__":

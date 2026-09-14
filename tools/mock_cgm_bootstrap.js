@@ -28,15 +28,16 @@ function makeEventBus(events) {
 }
 
 function makeManager(opts = {}) {
+  const accountId = opts.accountId || null;
   const playerInfo = Object.prototype.hasOwnProperty.call(opts, 'playerInfo')
     ? opts.playerInfo
-    : { maxMapId: 3 };
+    : Object.assign({ maxMapId: 3 }, accountId ? { uid: accountId } : {});
   const PlayerData = {
     playerInfo,
-    gemNum: 100,
-    powerNum: 30,
-    adCouponNum: 4,
-    clothingCionNum: 7,
+    gemNum: opts.gemNum == null ? 100 : opts.gemNum,
+    powerNum: opts.powerNum == null ? 30 : opts.powerNum,
+    adCouponNum: opts.adCouponNum == null ? 4 : opts.adCouponNum,
+    clothingCionNum: opts.clothingCionNum == null ? 7 : opts.clothingCionNum,
     setPropNum(id, value) {
       if (id === 57) this.adCouponNum = value;
       if (id === 45) this.clothingCionNum = value;
@@ -50,18 +51,24 @@ function makeManager(opts = {}) {
       return { original: true, purchaseId: purchaseTbl && purchaseTbl.ID };
     }
   };
+  const VipCard = {
+    isVipEffectTime: !!opts.vipActive,
+    vipEndTimes: opts.vipEndTimes || 0,
+    vipCardData: { type: 0, beginT: 0, endT: opts.vipEndTimes || 0, payData: [], hasGetDayNames: [] },
+    getVipLeftTime: () => VipCard.isVipEffectTime ? 86400 : 0,
+    setPlayerVipDataByGiftId(id) {
+      if (opts.vipGrant === false) { throw new Error('vip grant disabled'); }
+      VipCard.isVipEffectTime = true;
+      VipCard.vipEndTimes = 4102444800;
+      VipCard.vipCardData.endT = VipCard.vipEndTimes;
+      VipCard.vipCardData.type = id;
+    }
+  };
   const Manager = {
     PlayerData,
-    MapData: { mapCoinNum: 200 },
+    MapData: { mapCoinNum: opts.mapCoinNum == null ? 200 : opts.mapCoinNum },
     Pay,
-    VipCard: {
-      isVipEffectTime: false,
-      vipCardData: { type: 0, beginT: 0, endT: 0, payData: [], hasGetDayNames: [] },
-      getVipLeftTime: () => 0,
-      setPlayerVipDataByGiftId() {
-        throw new Error('direct grant path is intentionally not exercised by this harness');
-      }
-    },
+    VipCard,
     Table: {
       giftTbl: [{ GiftType: 24, PurchaseId: [86, 87, 82], RewardIds: [3001, 3002, 3003] }],
       purchaseTbl: [{ ID: 86 }, { ID: 87 }, { ID: 82 }, { ID: 999 }],
@@ -70,6 +77,7 @@ function makeManager(opts = {}) {
     ServerData: {},
     Reward: {}
   };
+  if (accountId) { Manager.Auth = { userInfo: { userId: accountId } }; }
   return { Manager, PlayerData, Pay, getOriginalPayCalls: () => originalPayCalls };
 }
 
@@ -92,7 +100,8 @@ function makeFileUtils(files, writeCounts, opts = {}) {
       files.set(p, String(s));
       writeCounts.set(p, (writeCounts.get(p) || 0) + 1);
       return true;
-    }
+    },
+    removeFile: (p) => { files.delete(p); return true; }
   };
 }
 
@@ -140,7 +149,14 @@ function runBootstrap(opts = {}) {
     }
   }
   const dir = '/mock/Documents/cookingmod/';
-  return { context, files, writeCounts, timers, logs, events, modules, managerBundle, dir, runTimer };
+  const handle = { context, files, writeCounts, timers, logs, events, modules, managerBundle, dir, runTimer };
+  handle.swapManager = (bundle) => {
+    handle.modules.Manager.default = bundle.Manager;
+    handle.activeManagerBundle = bundle;
+    return bundle.Manager;
+  };
+  handle.activeManagerBundle = managerBundle;
+  return handle;
 }
 
 function readJsonFile(h, name) { return parseMaybe(h.files.get(h.dir + name)); }
@@ -252,6 +268,70 @@ test('default-off Pay wrapper passes purchase calls to original implementation',
   assert.equal(h.managerBundle.getOriginalPayCalls(), 1);
   const state = readJsonFile(h, 'state.json');
   assert.equal(state.iapHook, 0);
+});
+
+
+test('rebinds Manager/Pay/VipCard and preserves account-local resources across A to B to A', () => {
+  const a = makeManager({ accountId: 'A', gemNum: 100, mapCoinNum: 200, vipGrant: true });
+  const b = makeManager({ accountId: 'B', gemNum: 900, mapCoinNum: 800, vipGrant: true });
+  const h = runBootstrap({
+    managerBundle: a,
+    files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']])
+  });
+  let state = readJsonFile(h, 'state.json');
+  assert.equal(state.sessionGen, 1);
+  assert.equal(state.gem, 100);
+  putJsonFile(h, 'cmd.json', { seq: 1, res: 'gem', action: 'add', value: 25, sessionGen: 1 });
+  h.runTimer(1);
+  assert.equal(a.PlayerData.gemNum, 125);
+  assert.equal(readJsonFile(h, 'res.json').ok, true);
+
+  h.swapManager(b);
+  h.runTimer(1);
+  state = readJsonFile(h, 'state.json');
+  assert.equal(state.sessionGen, 2);
+  assert.equal(state.gem, 900);
+  assert.equal(state.coin, 800);
+  assert.equal(a.Manager.Pay.__cookingModIapHook, undefined);
+  assert.equal(typeof b.Manager.Pay.pay, 'function');
+
+  putJsonFile(h, 'cmd.json', { seq: 1, res: 'coin', action: 'set', value: 777, sessionGen: 2 });
+  h.runTimer(1);
+  assert.equal(b.Manager.MapData.mapCoinNum, 777);
+
+  h.swapManager(a);
+  h.runTimer(1);
+  state = readJsonFile(h, 'state.json');
+  assert.equal(state.sessionGen, 3);
+  assert.equal(state.gem, 125);
+  assert.equal(state.coin, 200);
+  assert.equal(a.PlayerData.gemNum, 125);
+  assert.equal(b.Manager.MapData.mapCoinNum, 777);
+});
+
+test('rebinds direct month-card test to the active account and rejects stale session commands', () => {
+  const a = makeManager({ accountId: 'A', vipGrant: true });
+  const b = makeManager({ accountId: 'B', vipGrant: true });
+  const h = runBootstrap({ managerBundle: a, files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  putJsonFile(h, 'cmd.json', { seq: 9, res: 'vip_card', action: 'buy', value: 30, sessionGen: 1 });
+  h.runTimer(1);
+  assert.equal(readJsonFile(h, 'res.json').ok, true);
+  assert.equal(a.Manager.VipCard.isVipEffectTime, true);
+
+  h.swapManager(b);
+  h.runTimer(1);
+  putJsonFile(h, 'cmd.json', { seq: 9, res: 'vip_card', action: 'buy', value: 30, sessionGen: 1 });
+  h.runTimer(1);
+  let res = readJsonFile(h, 'res.json');
+  assert.equal(res.ok, false);
+  assert.match(res.error, /stale command sessionGen=1 current=2/);
+  assert.equal(b.Manager.VipCard.isVipEffectTime, false);
+
+  putJsonFile(h, 'cmd.json', { seq: 10, res: 'vip_card', action: 'buy', value: 30, sessionGen: 2 });
+  h.runTimer(1);
+  res = readJsonFile(h, 'res.json');
+  assert.equal(res.ok, true);
+  assert.equal(b.Manager.VipCard.isVipEffectTime, true);
 });
 
 test('file read/write exceptions do not escape bootstrap evaluation', () => {
