@@ -97,3 +97,16 @@ python tools\static_verify_12602.py --ipa "F:\测试\cookingGO\Cooking Go_1.26.0
 - 静态闭环：`static closure: OK`；包内 `rt=0` 默认保持关闭，JSC SHA-256 仍为 `445045da019b47e8522c661a80431da324057b0f5ad78cb181c01251adfee494`。
 - Release：`https://github.com/593348207-glitch/cookinggo-mod/releases/download/v1.3.8/com.seagull.cookinggomod_1.3.8_iphoneos-arm64.deb`。
 - 设备当前已验证的是旧 dylib 包的 1.3.8 runtime handshake；新正式 dylib 已编译并静态核验，尚未通过 MCP 安装到设备，因为设备侧安装 helper 返回 `sudo: no password was provided`。下一步是用正式包做安装/旧 receipt 自动清理/A→B→A 回归，不把旧包 runtime PASS 混写成新 dylib 已真机验收。
+
+## 2026-09-14 正式包安装与不闪退烟测
+
+- GitHub Actions run `34832974907`（commit `46c3340`，macOS-15）成功构建正式 1.3.8 DEB。
+- 正式包已安装到 iPhone14,5 / iOS 15.6.1 rootless 设备：`dpkg` 返回 `0`，状态 `install ok installed 1.3.8`。
+- 本地正式包：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.8_iphoneos-arm64.deb`。
+- SHA-256：`9a9c18cd7c21a992516e3261c501352b31a33dbea8cfe2f0a5c79d086c8c7b0e`。
+- 烟测证据：`F:\测试\cookingGO\_work\formal-package-smoke-latest\formal_smoke_latest.json`。
+  - `rt=0` 冷启动：前台确认 `Cooking Go`，CrashReporter `count=0`，无 `Library Validation`/`dyld` 失败。
+  - `rt=1` 冷启动：前台确认 `Cooking Go`，CrashReporter `count=0`；日志出现 `runtime evalString bootstrap OK reason=hook-hit` 与 `reason=jsb-adapter/jsb-builtin.js`。
+  - `rt=1` 的 `js_hello/state/probe` 均为本次启动后的 fresh 时间戳，`version=1.3.8`、`sessionGen=1`、`state.ready=true`。
+- 账号切换与资源/IAP/月卡按钮尚未操作，等待用户下一步测试。
+
