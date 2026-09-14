@@ -99,6 +99,19 @@ F:\测试\cookingGO\
 - 本地 mock 已通过 `21/21 tests passed`；静态验证 `static closure: OK`。
 
 
+## 2026-09-14 1.4.1 财富日历 100 USD 目标与加赠资格
+
+- 用户确认现有功能正常，要求将 Native 面板 `礼包测试` 点击后的财富日历累计消费目标改为 `100.00 USD`，用于覆盖财富日历三档和末档加赠资格。
+- Commit：`be21dcc`，已推送 `main` 与 `codex/iap-month-card-hook`；正式包版本 `1.4.1`。
+- 实现：`purchase_sim` 新增 `targetPayTotal`；当前累计低于目标时只补差额，达到目标时返回 `alreadyAtTarget`，不会重复膨胀 `payTotal`。同步 `PlayerData.payTotal`、`ServerData.gameData.playerInfo.payTotal`、`richesInfo.accumulateNum`。
+- 加赠静态链确认：`GiftRiches.onClickGet` 在 Track 2 Day 2 领取后执行 `getWeekCard()`，再走 `VipCard.setPlayerVipDataByGiftId(weekPurchaseTbl.ID, true)` 和 `getAward(weekRewardTbl.ID, false)`。`extraBonus.eligible=true` 仅表示末档领取资格，实际加赠仍由原生领取动作触发。
+- 本地回归：`22/22 tests passed`；`static closure: OK`。
+- 正式 DEB：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.4.1_iphoneos-arm64.deb`，SHA-256：`40E8FA37E09C1260D18D1402DBAE8997B89C909841897C71B90D6CA5A7CBD78F`。
+- 设备安装：`dpkg Status: install ok installed`、`Version: 1.4.1`；fresh 报告 `F:\测试\cookingGO\_work\package-chain-141-fresh.json`，`base/rt0/rt1 PASS`、`lv=0`、`dyld=0`、无闪退。
+- 设备当前 fresh `state.json`：`version=1.4.1`、`state.ready=true`、`payTotal=100`、`riches.track0/1/2Unlocked=true`、`extraBonus.eligible=true`、`extraBonus.granted=false`。
+- 不包含真实 StoreKit 交易，未创建真实订单；`res.json` 目前已被冷启动清理，状态证据以 fresh `state.json` 和 `mod.log` 为准。
+
+
 ## 9. 不能改动 / 需要注意的约束
 
 - 不把 JS receipt 当唯一成功条件；不得无限显示“等待 JS 回执”。
