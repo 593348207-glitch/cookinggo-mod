@@ -1,6 +1,6 @@
 # CookingGo Mod — Cooking GO 1.25.03/1.26.02
 
-iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.8 (session-aware rebind worktree; final dylib requires macOS build)**
+iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.8 (session-aware rebind; GitHub macOS formal DEB built by run 34830950020)**
 
 * Install: `/var/jb/usr/lib/TweakInject/CookingGoMod.dylib` (+ `.plist`, `.cfg`, `.bootstrap.js`)
 * Bundle filter: `com.airplanecooking.chef.kitchen.restaurant.diner`
@@ -24,6 +24,7 @@ iOS 16.2 / arm64 / Dopamine rootless tweak. **Latest: 1.3.8 (session-aware rebin
 - command、result、state、probe 和 IAP 状态带 `sessionGen/sessionKey`；旧 session 的 command/result 会被丢弃或拒绝。
 - Native bridge 每轮重新解析 mailbox；检测到 session 变化时重置 seq 和 UI 状态，命令超过 3 秒显示 mailbox/session 诊断。
 - `tools/mock_cgm_bootstrap.js` 已覆盖账号 A→B→A 的资源修改、Pay hook 重绑、月卡 test double 和 stale session command，当前 `13/13 tests passed`。
+- GitHub Actions run `34830950020` 已在 macOS-15 成功构建正式 1.3.8 DEB；本地同步包 SHA-256 `9263ec414c380a5e53822aa465ea882d25e0fa613fdcf2436ec34ba0de8441ac`。
 - Windows 静态测试包：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.8_iphoneos-arm64-js-test.deb`。该包复用了既有 dylib，仅用于静态/mailbox 结构验证；正式 1.3.8 DEB 需要 macOS/Xcode workflow 重新编译 `src/CookingGoMod.m`。
 - 详见 `docs/SESSION-REBIND-12602.md`。
 

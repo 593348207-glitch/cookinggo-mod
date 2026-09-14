@@ -85,3 +85,15 @@ python tools\embed_js.py
 python tools\patch_cocos_jsc.py --input "F:\测试\cookingGO\Cooking Go_1.26.02.ipa" --key "75fa5f0d-2c43-45" --bootstrap src\CGMBootstrap.js --output packaging\CookingGoMod.index12602.jsc --dump-js "F:\测试\cookingGO\_work\CookingGoMod.index12602.patched.js"
 python tools\static_verify_12602.py --ipa "F:\测试\cookingGO\Cooking Go_1.26.02.ipa" --deb "F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.8_iphoneos-arm64.deb" --repo "F:\测试\cookingGO\github-cookinggo-mod"
 ```
+
+## GitHub macOS 正式构建（2026-09-14）
+
+- 提交：`5950693 Fix stale runtime receipts and privileged verifier`，已推送到 `codex/iap-month-card-hook`。
+- GitHub Actions：run `34830950020`，workflow `build-deb.yml`，macOS-15 runner，结论 `success`。
+- 正式 DEB artifact：`F:\测试\cookingGO\_work\github-build-34830950020\artifact\com.seagull.cookinggomod_1.3.8_iphoneos-arm64.deb`。
+- 已同步到：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.8_iphoneos-arm64.deb`。
+- 正式包 SHA-256：`9263ec414c380a5e53822aa465ea882d25e0fa613fdcf2436ec34ba0de8441ac`；旧 Windows/js-test 前包备份：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.8_iphoneos-arm64.pre-5950693.deb`。
+- 包内 `CookingGoMod.dylib` SHA-256：`7d36012d5f63768016f5f69003f8ef87da1894a676df7ef7c99558bac28a2d66`，已确认包含 `CGMRuntimeJSONHasCurrentVersion`、stale receipt 清理逻辑和 `sessionGen` 字符串。
+- 静态闭环：`static closure: OK`；包内 `rt=0` 默认保持关闭，JSC SHA-256 仍为 `445045da019b47e8522c661a80431da324057b0f5ad78cb181c01251adfee494`。
+- Release：`https://github.com/593348207-glitch/cookinggo-mod/releases/download/v1.3.8/com.seagull.cookinggomod_1.3.8_iphoneos-arm64.deb`。
+- 设备当前已验证的是旧 dylib 包的 1.3.8 runtime handshake；新正式 dylib 已编译并静态核验，尚未通过 MCP 安装到设备，因为设备侧安装 helper 返回 `sudo: no password was provided`。下一步是用正式包做安装/旧 receipt 自动清理/A→B→A 回归，不把旧包 runtime PASS 混写成新 dylib 已真机验收。
