@@ -174,7 +174,7 @@ def main() -> int:
         assert "runtime evalString hook disabled by config" in src_m
         assert "CGMSendLocalRichesPurchase" in src_m
         assert "richesSimTapped" in src_m
-        assert "礼包100" in src_m
+        assert "礼包测试" in src_m
         assert "targetPayTotal" in src_m
         assert b"runtime evalString hook installed" in data_files[dylib_path]
         assert b"bootstrap deferred limit reached" in data_files[dylib_path], "packaged dylib must be rebuilt after JS retry changes"
