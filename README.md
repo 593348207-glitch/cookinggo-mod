@@ -193,7 +193,7 @@ Verdict: the immediate crash root is signing/library-validation/dyld loading sta
 
 ## 1.4.0 财富日历 100 USD + 末档加赠资格测试
 
-- `礼包100` 按钮改为目标额度模式：将当前账号的累计消费提升到**恰好 100.00 USD**，只计入当前 `payTotal` 到目标值之间的差额；重复点击不会继续累加。
+- `礼包测试` 按钮改为目标额度模式：将当前账号的累计消费提升到**恰好 100.00 USD**，只计入当前 `payTotal` 到目标值之间的差额；重复点击不会继续累加。
 - `purchase_sim` 支持 `targetPayTotal`，并在回执中返回 `payTotalBefore`、`payTotalAfter`、三个财富日历 Track 状态和 `extraBonus` 资格信息。
 - 100 USD 会同时满足海外财富日历阈值 `0.99 / 5.99 / 21.99`；末档奖励领取路径 `Riches track 2 day 2 -> getWeekCard()` 的额外加赠资格会标记为可用，实际加赠仍由游戏原生领取流程触发。
 - `PlayerData.payTotal` 优先走原生 setter，再同步 `ServerData.gameData.playerInfo.payTotal`；同时更新 `richesInfo.accumulateNum`，确保财富日历进度立即显示 100.00 USD。

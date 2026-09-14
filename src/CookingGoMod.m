@@ -1169,7 +1169,7 @@ static const int kCGMResCount = 5;
     self.vipCardButton.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
     [self.panel addSubview:self.vipCardButton];
 
-    self.richesSimButton = [self makeButton:@"礼包100" color:[UIColor colorWithRed:0.76 green:0.52 blue:0.12 alpha:1.0] action:@selector(richesSimTapped)];
+    self.richesSimButton = [self makeButton:@"礼包测试" color:[UIColor colorWithRed:0.76 green:0.52 blue:0.12 alpha:1.0] action:@selector(richesSimTapped)];
     self.richesSimButton.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
     [self.panel addSubview:self.richesSimButton];
 

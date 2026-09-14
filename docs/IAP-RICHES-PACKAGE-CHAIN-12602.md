@@ -96,7 +96,7 @@ Track 2: 21.99 USD -> beginTime3
 }
 ```
 
-Native 面板新增 `礼包100` 按钮。按钮写入 `purchase_sim` local-only mailbox 命令，使用 `targetPayTotal: 100.00`，只补齐当前账号到目标额度的差额；重复点击不会继续膨胀 `payTotal`。它不是 Store 购买按钮。
+Native 面板新增 `礼包测试` 按钮。按钮写入 `purchase_sim` local-only mailbox 命令，使用 `targetPayTotal: 100.00`，只补齐当前账号到目标额度的差额；重复点击不会继续膨胀 `payTotal`。它不是 Store 购买按钮。
 
 ## 100 USD 目标额度与末档加赠
 
