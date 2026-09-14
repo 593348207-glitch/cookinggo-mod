@@ -60,6 +60,7 @@ static int gCfgVerboseLog = 0;
 static NSMutableArray<NSString *> *gLogStore = nil;
 static void (^gLogSink)(NSString *line) = nil;
 static NSString *gMailboxPath = nil;
+static NSTimeInterval gCGMLoadStartedAt = 0;
 
 static void CGMFileAppend(NSString *line) {
     if (!gMailboxPath) { return; }
@@ -264,13 +265,21 @@ static BOOL CGMRuntimeJSONHasCurrentVersion(NSString *path) {
     return [ver isKindOfClass:[NSString class]] && [(NSString *)ver isEqualToString:CGM_VERSION];
 }
 
+static BOOL CGMRuntimeJSONIsFreshCurrentVersion(NSString *path) {
+    if (!CGMRuntimeJSONHasCurrentVersion(path)) { return NO; }
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL];
+    NSDate *mtime = [attrs objectForKey:NSFileModificationDate];
+    if (!mtime || gCGMLoadStartedAt <= 0) { return NO; }
+    return [mtime timeIntervalSince1970] >= gCGMLoadStartedAt;
+}
+
 static BOOL CGMRuntimeJSReceiptSeen(void) {
-    /* File existence is not a handshake. Leftover 1.3.7 / STAMP-CLEAR receipts
-       previously skipped evalString bootstrap entirely. */
+    /* A same-version receipt from a previous process is still stale. Require
+       the JSON file to be rewritten after this tweak load started. */
     if (!gMailboxPath.length) { return NO; }
-    return CGMRuntimeJSONHasCurrentVersion([gMailboxPath stringByAppendingPathComponent:@"js_hello.json"]) ||
-           CGMRuntimeJSONHasCurrentVersion([gMailboxPath stringByAppendingPathComponent:@"state.json"]) ||
-           CGMRuntimeJSONHasCurrentVersion([gMailboxPath stringByAppendingPathComponent:@"probe.json"]);
+    return CGMRuntimeJSONIsFreshCurrentVersion([gMailboxPath stringByAppendingPathComponent:@"js_hello.json"]) ||
+           CGMRuntimeJSONIsFreshCurrentVersion([gMailboxPath stringByAppendingPathComponent:@"state.json"]) ||
+           CGMRuntimeJSONIsFreshCurrentVersion([gMailboxPath stringByAppendingPathComponent:@"probe.json"]);
 }
 
 static void CGMDiscardStaleRuntimeReceipts(void) {
@@ -1738,6 +1747,7 @@ static void CGMLoad(void) {
             NSLog(@"[CookingGoMod] bundle %@ is not the target, skipping", bid);
             return;
         }
+        gCGMLoadStartedAt = [[NSDate date] timeIntervalSince1970];
         @try {
             gJSPayload = [[NSString alloc] initWithBytes:kCGMBootstrapJS
                                                   length:strlen(kCGMBootstrapJS)
