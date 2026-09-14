@@ -191,6 +191,24 @@ Verdict: the immediate crash root is signing/library-validation/dyld loading sta
 - `tools/mock_cgm_bootstrap.js` now validates the early-no-`fileUtils` retry path and recovery once JSB becomes available.
 - `tools/static_verify_12602.py` now requires `src/CGMBootstrap.generated.h` and the packaged dylib to contain the retry marker, preventing Windows-only payload repacks from being mistaken for a rebuilt runtime-hook dylib.
 
+## 1.3.9 local package → Riches chain
+
+- Added runtime `iap_catalog` inspection: reads the current `Manager.Table.purchaseTbl` and `GiftType === 28` Riches rows without inventing a SKU or purchase ID.
+- Added `purchase_sim`, an explicit `localOnly: true` simulator. It updates the local mock/runtime `playerInfo.payTotal`, records a de-duplicated local order, refreshes `Activity.richesInfo`, and persists with `saveRichesInfo(false)`. It never creates an App Store receipt and never calls the iOS Store bridge.
+- Added native panel button `礼包测试`, visibly marked as a local test entry, which sends a 0.99 USD local simulation command. The existing `内购:关/开` button and real Store callback path are unchanged.
+- Added `docs/IAP-RICHES-PACKAGE-CHAIN-12602.md` with the confirmed chain, mailbox schema, catalog requirements, and verification evidence.
+- `tools/mock_cgm_bootstrap.js` now covers catalog discovery, 0.98/0.99 thresholds, cumulative totals, 5.99/21.99 tracks, order replay de-duplication, persistence, session isolation, and stale-session rejection.
+
+Verification:
+
+```powershell
+node --check F:\测试\cookingGO\github-cookinggo-mod\src\CGMBootstrap.js
+node --check F:\测试\cookingGO\github-cookinggo-mod\tools\mock_cgm_bootstrap.js
+node F:\测试\cookingGO\github-cookinggo-mod\tools\mock_cgm_bootstrap.js
+```
+
+Expected current result: `21/21 tests passed`.
+
 ## 1.3.4 local static IAP/Riches evidence and bootstrap harness
 
 - Added static report `docs/IAP-RICHES-STATIC-12602.md` for the Table loading chain, `EGiftType` values, `Pay.pay -> paySuc -> OnSuccess` dispatch model, the 50 static `Pay.pay` callsites, and the Riches calendar thresholds/reward/persistence chain.
@@ -201,7 +219,7 @@ Verdict: the immediate crash root is signing/library-validation/dyld loading sta
 node F:\测试\cookingGO\github-cookinggo-mod\tools\mock_cgm_bootstrap.js
 ```
 
-Expected result: `11/11 tests passed`.
+Expected result on the original 1.3.4 baseline: `11/11 tests passed`; the current package-chain branch runs `21/21 tests passed`.
 
 ## 1.3.4 runtime JS receipt update
 

@@ -15,7 +15,7 @@
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
 ;(function cookingModBootstrapEntry() {
-  var VERSION = "1.3.8";
+  var VERSION = "1.3.9";
   var TAG = "[CookingMod]";
 
   function log(s) {
@@ -108,6 +108,13 @@
   var gHookedPay = null, gHookedIOS = null;
   var lastSeq = -1;
   var gProbeSeq = 0;
+  /* Riches thresholds and GiftType are static-evidence-backed. The purchase
+     catalog itself is always read from the live Table manager; no SKU or
+     purchase ID is invented here. */
+  var RICHES_GIFT_TYPE = 28;
+  var RICHES_CONST_ID = 146;
+  var RICHES_DEFAULT_THRESHOLDS = [ 0.99, 5.99, 21.99 ];
+  var gSimulatedOrders = {};
 
   function req(name) {
     try { return window.__require(name); } catch (e) { return null; }
@@ -194,6 +201,7 @@
       previousSession: oldKey, reason: reason || "binding changed", ts: now()
     });
     if (gIap) { saveIapState(); }
+    gSimulatedOrders = {};
     log("session rebind " + oldKey + " -> " + gSessionKey + " reason=" + (reason || "binding changed"));
   }
 
@@ -309,6 +317,263 @@
   function purchaseIdOf(p) {
     if (!p) { return 0; }
     return asId(p.ID || p.id || p.purchaseId || p.PurchaseId || p.productId);
+  }
+
+  function moneyNum(v) {
+    var n = Number(v);
+    if (!isFinite(n)) { return null; }
+    return Math.round(n * 100) / 100;
+  }
+
+  function firstNumber(obj, keys) {
+    if (!obj) { return null; }
+    for (var i = 0; i < keys.length; i++) {
+      try {
+        if (obj[keys[i]] === null || typeof obj[keys[i]] === "undefined" || obj[keys[i]] === "") { continue; }
+        var n = moneyNum(obj[keys[i]]);
+        if (n !== null) { return n; }
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  function purchasePriceOf(p) {
+    return firstNumber(p, [ "Price", "price", "priceUsd", "priceUSD", "amount" ]);
+  }
+
+  function purchaseProductIdOf(p) {
+    if (!p) { return ""; }
+    var keys = [ "ProductIDiOSOversea", "ProductIDiOSInland", "ProductID", "ProductId", "productId", "ProductIDFb" ];
+    for (var i = 0; i < keys.length; i++) {
+      try { if (p[keys[i]] !== null && typeof p[keys[i]] !== "undefined" && String(p[keys[i]]).length) return String(p[keys[i]]); } catch (e) {}
+    }
+    return "";
+  }
+
+  function giftRowsByType(type) {
+    var out = [];
+    try {
+      var gt = G && G.Table && G.Table.giftTbl;
+      if (!Array.isArray(gt)) { return out; }
+      for (var i = 0; i < gt.length; i++) {
+        var row = gt[i];
+        if (row && asId(row.GiftType) === asId(type)) { out.push(row); }
+      }
+    } catch (e) {}
+    return out;
+  }
+
+  function iapCatalog() {
+    var purchases = [];
+    var gifts = [];
+    try {
+      var pt = G && G.Table && G.Table.purchaseTbl;
+      if (Array.isArray(pt)) {
+        for (var i = 0; i < pt.length; i++) {
+          var p = pt[i];
+          if (!p) { continue; }
+          purchases.push({
+            id: purchaseIdOf(p),
+            price: purchasePriceOf(p),
+            productId: purchaseProductIdOf(p),
+            rewardId: asId(p.RewardID) || 0
+          });
+        }
+      }
+    } catch (e) {}
+    var rows = giftRowsByType(RICHES_GIFT_TYPE);
+    for (var j = 0; j < rows.length; j++) {
+      var g = rows[j];
+      gifts.push({
+        id: asId(g.ID),
+        giftType: asId(g.GiftType),
+        purchaseIds: Array.isArray(g.PurchaseId) ? g.PurchaseId.map(asId) : [],
+        rewardIds: Array.isArray(g.RewardIds) ? g.RewardIds.map(asId) : []
+      });
+    }
+    return {
+      richesGiftType: RICHES_GIFT_TYPE,
+      richesGifts: gifts,
+      purchases: purchases,
+      source: "Manager.Table runtime catalog"
+    };
+  }
+
+  function gameServerTime() {
+    try {
+      var t = G && G.Http && Number(G.Http.serverTime);
+      if (isFinite(t) && t > 0) { return t; }
+    } catch (e) {}
+    return now();
+  }
+
+  function richesThresholds() {
+    var fallback = RICHES_DEFAULT_THRESHOLDS.slice(0);
+    try {
+      var raw = G && G.Table && typeof G.Table.constById === "function" ? G.Table.constById(RICHES_CONST_ID) : null;
+      if (raw && Array.isArray(raw.Value)) { raw = raw.Value; }
+      if (!Array.isArray(raw)) { return { values: fallback, source: "static-evidence-fallback" }; }
+      var inland = false;
+      try { inland = !!(G && G.App && G.App.IsInland); } catch (e) {}
+      var out = [];
+      for (var i = 0; i < 3; i++) {
+        var row = raw[i];
+        var value = Array.isArray(row) ? row[inland ? 1 : 0] : row;
+        var n = moneyNum(value);
+        out.push(n === null ? fallback[i] : n);
+      }
+      return { values: out, source: "Table.constById(146)" };
+    } catch (e) {
+      return { values: fallback, source: "static-evidence-fallback" };
+    }
+  }
+
+  function richesInfoObject() {
+    var gd = null;
+    try { gd = G && G.ServerData && G.ServerData.gameData; } catch (e) {}
+    if (!gd) { return null; }
+    var info = null;
+    try {
+      if (G.Activity) { info = G.Activity.richesInfo; }
+    } catch (e) {}
+    if (!info) {
+      info = gd.richesInfo || { rewardGetIdx: [], beginTime: 0, beginTime2: 0, beginTime3: 0, accumulateNum: 0, dailyRedDot: false, firstRedDot: true };
+      gd.richesInfo = info;
+    }
+    if (!Array.isArray(info.rewardGetIdx)) { info.rewardGetIdx = []; }
+    return info;
+  }
+
+  function currentPayTotal() {
+    try {
+      var gd = G && G.ServerData && G.ServerData.gameData;
+      var n = gd && gd.playerInfo ? moneyNum(gd.playerInfo.payTotal) : null;
+      if (n !== null) { return n; }
+    } catch (e) {}
+    try {
+      var n2 = PD && PD.playerInfo ? moneyNum(PD.playerInfo.payTotal) : null;
+      if (n2 !== null) { return n2; }
+    } catch (e) {}
+    return 0;
+  }
+
+  function setPayTotal(value) {
+    var ok = false;
+    try {
+      var gd = G && G.ServerData && G.ServerData.gameData;
+      if (gd && gd.playerInfo) { gd.playerInfo.payTotal = value; ok = true; }
+    } catch (e) {}
+    try {
+      if (PD && PD.playerInfo && (!G.ServerData || !G.ServerData.gameData || PD.playerInfo !== G.ServerData.gameData.playerInfo)) {
+        PD.playerInfo.payTotal = value;
+        ok = true;
+      }
+    } catch (e) {}
+    return ok;
+  }
+
+  function refreshRiches(shouldSave) {
+    var thresholds = richesThresholds();
+    var total = currentPayTotal();
+    var info = richesInfoObject();
+    var fields = [ "beginTime", "beginTime2", "beginTime3" ];
+    if (info) {
+      var t = gameServerTime();
+      for (var i = 0; i < fields.length; i++) {
+        if (total >= thresholds.values[i] && !Number(info[fields[i]])) { info[fields[i]] = t; }
+      }
+      if (shouldSave !== false) {
+        try {
+          if (G.ServerData && typeof G.ServerData.saveRichesInfo === "function") { G.ServerData.saveRichesInfo(false); }
+        } catch (e) { log("saveRichesInfo failed: " + str(e)); }
+      }
+    }
+    return {
+      payTotal: total,
+      thresholds: thresholds.values,
+      thresholdSource: thresholds.source,
+      beginTime: info ? Number(info.beginTime) || 0 : 0,
+      beginTime2: info ? Number(info.beginTime2) || 0 : 0,
+      beginTime3: info ? Number(info.beginTime3) || 0 : 0,
+      track0Unlocked: !!(info && Number(info.beginTime) > 0),
+      track1Unlocked: !!(info && Number(info.beginTime2) > 0),
+      track2Unlocked: !!(info && Number(info.beginTime3) > 0)
+    };
+  }
+
+  function simulatedOrderExists(orderId) {
+    if (!orderId) { return false; }
+    if (gSimulatedOrders[orderId]) { return true; }
+    try {
+      var pi = G && G.PayData && G.PayData.payInfo;
+      if (Array.isArray(pi)) {
+        for (var i = 0; i < pi.length; i++) if (String(pi[i] && pi[i].orderId) === orderId) return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  function simulatePurchase(cmd) {
+    var out = { ok: false, res: "purchase_sim", action: cmd.action || "success", localOnly: true, version: VERSION, sessionGen: gSessionGen, sessionKey: gSessionKey, ts: now() };
+    if (cmd.localOnly !== true) { out.error = "purchase_sim requires localOnly=true"; return out; }
+    if (!bind()) { out.error = "engine not bound: " + gBindWhy; return out; }
+    var amount = cmd.amount !== undefined ? moneyNum(cmd.amount) : moneyNum(cmd.value);
+    if (cmd.amountCents !== undefined) { amount = moneyNum(Number(cmd.amountCents) / 100); }
+    if (amount === null || amount <= 0 || amount > 1000) { out.error = "bad purchase amount"; return out; }
+    var orderId = String(cmd.orderId || ("cgm_local_" + gSessionKey + "_" + cmd.seq));
+    out.orderId = orderId;
+    if (simulatedOrderExists(orderId)) {
+      var duplicate = refreshRiches(true);
+      out.ok = true;
+      out.duplicate = true;
+      out.amount = amount;
+      out.payTotalBefore = duplicate.payTotal;
+      out.payTotalAfter = duplicate.payTotal;
+      out.riches = duplicate;
+      out.message = "local purchase replay ignored: orderId=" + orderId;
+      return out;
+    }
+    var before = currentPayTotal();
+    var purchaseId = asId(cmd.purchaseId);
+    var purchase = purchaseId ? findPurchaseTbl(purchaseId) : null;
+    var catalogPrice = purchasePriceOf(purchase);
+    if (cmd.requireCatalog === true && !purchase) { out.error = "purchaseId not found in runtime catalog"; return out; }
+    if (purchase && catalogPrice !== null && cmd.allowPriceOverride !== true && Math.abs(catalogPrice - amount) > 0.001) {
+      out.error = "amount does not match purchaseTbl.Price";
+      out.catalogPrice = catalogPrice;
+      return out;
+    }
+    var after = moneyNum(before + amount);
+    if (after === null || !setPayTotal(after)) { out.error = "playerInfo.payTotal unavailable"; return out; }
+    var recorded = false;
+    try {
+      var payData = G && G.PayData;
+      if (payData && typeof payData.addPayData === "function") {
+        payData.addPayData(purchaseId, amount, orderId);
+        recorded = true;
+      }
+    } catch (e) { log("local PayData.addPayData failed: " + str(e)); }
+    try {
+      var pi = G && G.PayData && G.PayData.payInfo;
+      if (!recorded && Array.isArray(pi)) {
+        pi.unshift({ purchaseId: purchaseId, price: amount, time: gameServerTime(), orderId: orderId });
+        try { if (G.ServerData && typeof G.ServerData.savePayInfo === "function") G.ServerData.savePayInfo(false); } catch (e) {}
+        recorded = true;
+      }
+    } catch (e) {}
+    gSimulatedOrders[orderId] = { amount: amount, purchaseId: purchaseId, ts: now(), sessionGen: gSessionGen };
+    var riches = refreshRiches(true);
+    out.ok = true;
+    out.amount = amount;
+    out.purchaseId = purchaseId || null;
+    out.catalogPrice = catalogPrice;
+    out.recorded = recorded;
+    out.payTotalBefore = before;
+    out.payTotalAfter = riches.payTotal;
+    out.riches = riches;
+    out.richesTrack0Unlocked = riches.track0Unlocked;
+    out.message = "local purchase simulated; no App Store transaction was created";
+    return out;
   }
 
   function isVipPurchase(p) {
@@ -548,6 +813,8 @@
     out.iapHookInstalledPay = gIap.installedPay ? 1 : 0;
     out.iapHookInstalledIOS = gIap.installedIOS ? 1 : 0;
     out.iapLast = gIap.last;
+    out.payTotal = currentPayTotal();
+    try { out.riches = refreshRiches(false); } catch (e) { out.riches_err = str(e); }
     try { out.vip = vipSummary(); } catch (e) { out.vip_err = str(e); }
     return out;
   }
@@ -565,6 +832,17 @@
     var res = { seq: cmd.seq, res: cmd.res, action: cmd.action, input: cmd.value, ts: now(), version: VERSION, sessionGen: gSessionGen, sessionKey: gSessionKey };
     if (typeof cmd.sessionGen === "number" && cmd.sessionGen !== gSessionGen) {
       res.ok = false; res.error = "stale command sessionGen=" + cmd.sessionGen + " current=" + gSessionGen; return res;
+    }
+    if (cmd.res === "iap_catalog") {
+      if (!bind()) { res.ok = false; res.error = "engine not bound (PlayerData not ready)"; return res; }
+      res.ok = true;
+      res.catalog = iapCatalog();
+      return res;
+    }
+    if (cmd.res === "purchase_sim") {
+      var ps = simulatePurchase(cmd);
+      ps.seq = cmd.seq;
+      return ps;
     }
     if (cmd.res === "iap_hook") {
       var iapBefore = !!gIap.enabled;
@@ -638,6 +916,7 @@
     try { out.hasPay = !!(req("Manager").default.Pay && req("Manager").default.Pay.pay); } catch (e) { out.payErr = str(e); }
     try { var ios = req("YiFaniOSIAPBridge"); out.hasYiFaniOS = !!(ios && ios.default && ios.default.buyProduct); } catch (e) { out.iosIapErr = str(e); }
     try { out.vip = vipSummary(); } catch (e) { out.vipErr = str(e); }
+    try { out.iapCatalog = iapCatalog(); } catch (e) { out.iapCatalogErr = str(e); }
     out.state = snapshot();
     writeJson(DIR + "probe.json", out);
   }

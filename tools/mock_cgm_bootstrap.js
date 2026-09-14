@@ -31,7 +31,15 @@ function makeManager(opts = {}) {
   const accountId = opts.accountId || null;
   const playerInfo = Object.prototype.hasOwnProperty.call(opts, 'playerInfo')
     ? opts.playerInfo
-    : Object.assign({ maxMapId: 3 }, accountId ? { uid: accountId } : {});
+    : Object.assign({ maxMapId: 3, payTotal: opts.payTotal == null ? 0 : opts.payTotal }, accountId ? { uid: accountId } : {});
+  if (playerInfo && playerInfo.payTotal == null) playerInfo.payTotal = opts.payTotal == null ? 0 : opts.payTotal;
+  const gameData = { playerInfo, richesInfo: null, payInfo: [] };
+  const saveCounters = { riches: 0, pay: 0 };
+  const ServerData = {
+    gameData,
+    saveRichesInfo() { saveCounters.riches += 1; },
+    savePayInfo() { saveCounters.pay += 1; }
+  };
   const PlayerData = {
     playerInfo,
     gemNum: opts.gemNum == null ? 100 : opts.gemNum,
@@ -51,6 +59,13 @@ function makeManager(opts = {}) {
       return { original: true, purchaseId: purchaseTbl && purchaseTbl.ID };
     }
   };
+  const PayData = {
+    get payInfo() { return gameData.payInfo; },
+    addPayData(purchaseId, price, orderId) {
+      gameData.payInfo.unshift({ purchaseId, price, orderId, time: 1700000000 });
+      ServerData.savePayInfo(false);
+    }
+  };
   const VipCard = {
     isVipEffectTime: !!opts.vipActive,
     vipEndTimes: opts.vipEndTimes || 0,
@@ -64,21 +79,57 @@ function makeManager(opts = {}) {
       VipCard.vipCardData.type = id;
     }
   };
+  const Table = {
+    giftTbl: [
+      { ID: 28, GiftType: 28, PurchaseId: [], RewardIds: [4001, 4002, 4003] },
+      { ID: 31, GiftType: 28, PurchaseId: [], RewardIds: [4004, 4005, 4006] },
+      { ID: 32, GiftType: 28, PurchaseId: [], RewardIds: [4007, 4008, 4009] },
+      { ID: 24, GiftType: 24, PurchaseId: [86, 87, 82], RewardIds: [3001, 3002, 3003] }
+    ],
+    purchaseTbl: [
+      { ID: 1001, Price: 0.99, ProductID: 'mock.cookinggo.riches.099', ProductIDiOSOversea: 'mock.cookinggo.riches.099', RewardID: 0 },
+      { ID: 1002, Price: 5.99, ProductID: 'mock.cookinggo.riches.599', ProductIDiOSOversea: 'mock.cookinggo.riches.599', RewardID: 0 },
+      { ID: 1003, Price: 21.99, ProductID: 'mock.cookinggo.riches.2199', ProductIDiOSOversea: 'mock.cookinggo.riches.2199', RewardID: 0 },
+      { ID: 86, Price: 6.00 }, { ID: 87, Price: 30.00 }, { ID: 82, Price: 68.00 }, { ID: 999, Price: 1.99 }
+    ],
+    rewardTbl: [],
+    constById(id) { return id === 146 ? [[0.99, 6], [5.99, 38], [21.99, 128]] : null; }
+  };
+  const Activity = {};
+  Object.defineProperty(Activity, 'richesInfo', {
+    enumerable: true,
+    get() {
+      if (!gameData.richesInfo) gameData.richesInfo = {
+        rewardGetIdx: [], beginTime: 0, beginTime2: 0, beginTime3: 0,
+        accumulateNum: 0, dailyRedDot: false, firstRedDot: true
+      };
+      const total = Number(gameData.playerInfo && gameData.playerInfo.payTotal) || 0;
+      const thresholds = [[0.99, 6], [5.99, 38], [21.99, 128]];
+      if (total >= thresholds[0][0] && !gameData.richesInfo.beginTime) gameData.richesInfo.beginTime = 1700000000;
+      if (total >= thresholds[1][0] && !gameData.richesInfo.beginTime2) gameData.richesInfo.beginTime2 = 1700000000;
+      if (total >= thresholds[2][0] && !gameData.richesInfo.beginTime3) gameData.richesInfo.beginTime3 = 1700000000;
+      return gameData.richesInfo;
+    }
+  });
   const Manager = {
     PlayerData,
     MapData: { mapCoinNum: opts.mapCoinNum == null ? 200 : opts.mapCoinNum },
     Pay,
+    PayData,
     VipCard,
-    Table: {
-      giftTbl: [{ GiftType: 24, PurchaseId: [86, 87, 82], RewardIds: [3001, 3002, 3003] }],
-      purchaseTbl: [{ ID: 86 }, { ID: 87 }, { ID: 82 }, { ID: 999 }],
-      rewardTbl: []
-    },
-    ServerData: {},
+    Activity,
+    App: { IsInland: false },
+    Http: { serverTime: 1700000000 },
+    Table,
+    ServerData,
     Reward: {}
   };
   if (accountId) { Manager.Auth = { userInfo: { userId: accountId } }; }
-  return { Manager, PlayerData, Pay, getOriginalPayCalls: () => originalPayCalls };
+  return {
+    Manager, PlayerData, Pay, PayData, ServerData, Table,
+    getOriginalPayCalls: () => originalPayCalls,
+    getSaveCounts: () => ({ ...saveCounters })
+  };
 }
 
 function makeFileUtils(files, writeCounts, opts = {}) {
@@ -161,6 +212,13 @@ function runBootstrap(opts = {}) {
 
 function readJsonFile(h, name) { return parseMaybe(h.files.get(h.dir + name)); }
 function putJsonFile(h, name, obj) { h.files.set(h.dir + name, json(obj)); }
+function issuePurchase(h, seq, amount, orderId, extra = {}) {
+  putJsonFile(h, 'cmd.json', Object.assign({
+    seq, res: 'purchase_sim', action: 'success', value: amount, localOnly: true, orderId, sessionGen: 1
+  }, extra));
+  h.runTimer(1);
+  return readJsonFile(h, 'res.json');
+}
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
@@ -270,6 +328,112 @@ test('default-off Pay wrapper passes purchase calls to original implementation',
   assert.equal(state.iapHook, 0);
 });
 
+
+test('runtime catalog exposes purchase rows and Riches gift rows without guessing IDs', () => {
+  const h = runBootstrap({ files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  putJsonFile(h, 'cmd.json', { seq: 20, res: 'iap_catalog', action: 'read', sessionGen: 1 });
+  h.runTimer(1);
+  const res = readJsonFile(h, 'res.json');
+  assert.equal(res.ok, true);
+  assert.equal(res.catalog.source, 'Manager.Table runtime catalog');
+  assert.equal(res.catalog.richesGiftType, 28);
+  assert.equal(res.catalog.richesGifts.length, 3);
+  assert.ok(res.catalog.purchases.some((p) => p.id === 1001 && p.price === 0.99));
+  assert.ok(res.catalog.purchases.some((p) => p.productId === 'mock.cookinggo.riches.099'));
+});
+
+test('purchase_sim is local-only and requires an explicit localOnly marker', () => {
+  const h = runBootstrap({ files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  putJsonFile(h, 'cmd.json', { seq: 21, res: 'purchase_sim', action: 'success', value: 0.99, sessionGen: 1 });
+  h.runTimer(1);
+  const res = readJsonFile(h, 'res.json');
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'purchase_sim requires localOnly=true');
+  assert.equal(h.managerBundle.PlayerData.playerInfo.payTotal, 0);
+});
+
+test('0.98 does not unlock Riches track 0, while 0.99 does', () => {
+  const h = runBootstrap({ files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  let res = issuePurchase(h, 22, 0.98, 'order-098');
+  assert.equal(res.ok, true);
+  assert.equal(res.richesTrack0Unlocked, false);
+  assert.equal(res.payTotalAfter, 0.98);
+  res = issuePurchase(h, 23, 0.01, 'order-001');
+  assert.equal(res.ok, true);
+  assert.equal(res.richesTrack0Unlocked, true);
+  assert.equal(res.payTotalAfter, 0.99);
+  assert.equal(res.riches.beginTime > 0, true);
+  assert.equal(h.managerBundle.getSaveCounts().riches, 2);
+});
+
+test('purchase_sim accepts a runtime catalog row and records the 0.99 package price', () => {
+  const h = runBootstrap({ files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  const res = issuePurchase(h, 24, 0, 'order-catalog-099', { value: 0.99, purchaseId: 1001, requireCatalog: true });
+  assert.equal(res.ok, true);
+  assert.equal(res.purchaseId, 1001);
+  assert.equal(res.catalogPrice, 0.99);
+  assert.equal(res.recorded, true);
+  assert.equal(h.managerBundle.PayData.payInfo.length, 1);
+  assert.equal(h.managerBundle.getSaveCounts().pay, 1);
+});
+
+test('split purchases accumulate to unlock track 0 and duplicate order replay is ignored', () => {
+  const h = runBootstrap({ files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  let res = issuePurchase(h, 25, 0.50, 'order-half-a');
+  assert.equal(res.richesTrack0Unlocked, false);
+  res = issuePurchase(h, 26, 0.49, 'order-half-b');
+  assert.equal(res.richesTrack0Unlocked, true);
+  assert.equal(res.payTotalAfter, 0.99);
+  const duplicate = issuePurchase(h, 27, 0.49, 'order-half-b');
+  assert.equal(duplicate.ok, true);
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(duplicate.payTotalAfter, 0.99);
+  assert.equal(h.managerBundle.PayData.payInfo.length, 2);
+});
+
+test('5.99 and 21.99 cumulative totals unlock the expected Riches tracks', () => {
+  const h = runBootstrap({ files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  let res = issuePurchase(h, 28, 5.99, 'order-599');
+  assert.deepEqual([res.riches.track0Unlocked, res.riches.track1Unlocked, res.riches.track2Unlocked], [true, true, false]);
+  res = issuePurchase(h, 29, 16.00, 'order-1600');
+  assert.equal(res.payTotalAfter, 21.99);
+  assert.deepEqual([res.riches.track0Unlocked, res.riches.track1Unlocked, res.riches.track2Unlocked], [true, true, true]);
+});
+
+test('Riches persistence is called after a simulated purchase and account sessions stay isolated', () => {
+  const a = makeManager({ accountId: 'A' });
+  const b = makeManager({ accountId: 'B' });
+  const h = runBootstrap({ managerBundle: a, files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  const first = issuePurchase(h, 30, 0.99, 'a-order');
+  assert.equal(first.richesTrack0Unlocked, true);
+  assert.equal(a.getSaveCounts().riches, 1);
+  h.swapManager(b);
+  h.runTimer(1);
+  let state = readJsonFile(h, 'state.json');
+  assert.equal(state.sessionGen, 2);
+  assert.equal(state.payTotal, 0);
+  assert.equal(state.riches.track0Unlocked, false);
+  h.swapManager(a);
+  h.runTimer(1);
+  state = readJsonFile(h, 'state.json');
+  assert.equal(state.sessionGen, 3);
+  assert.equal(state.payTotal, 0.99);
+  assert.equal(state.riches.track0Unlocked, true);
+});
+
+test('stale purchase_sim session commands are rejected before mutation', () => {
+  const a = makeManager({ accountId: 'A' });
+  const b = makeManager({ accountId: 'B' });
+  const h = runBootstrap({ managerBundle: a, files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  h.swapManager(b);
+  h.runTimer(1);
+  putJsonFile(h, 'cmd.json', { seq: 31, res: 'purchase_sim', action: 'success', value: 0.99, orderId: 'stale', localOnly: true, sessionGen: 1 });
+  h.runTimer(1);
+  const res = readJsonFile(h, 'res.json');
+  assert.equal(res.ok, false);
+  assert.match(res.error, /stale command sessionGen=1 current=2/);
+  assert.equal(b.PlayerData.playerInfo.payTotal, 0);
+});
 
 test('rebinds Manager/Pay/VipCard and preserves account-local resources across A to B to A', () => {
   const a = makeManager({ accountId: 'A', gemNum: 100, mapCoinNum: 200, vipGrant: true });

@@ -39,7 +39,7 @@
 #import "CGMBootstrap.generated.h"
 
 #ifndef CGM_VERSION
-#define CGM_VERSION @"1.3.8"
+#define CGM_VERSION @"1.3.9"
 #endif
 
 static NSString * const kCGMTargetBundle = @"com.airplanecooking.chef.kitchen.restaurant.diner";
@@ -762,7 +762,7 @@ static NSString *CGMResolveActiveMailbox(void) {
     return gMailboxPath;
 }
 
-static void CGMSendCommand(NSString *res, NSString *action, long long value) {
+static void CGMSendCommandWithValue(NSString *res, NSString *action, id value, NSDictionary *extra) {
     CGMEnsureRuntimeMailbox();
     NSString *resolved = CGMResolveActiveMailbox();
     if (resolved.length) { gChosenMailbox = resolved; }
@@ -772,21 +772,35 @@ static void CGMSendCommand(NSString *res, NSString *action, long long value) {
     gAwaitingCommandSince = [[NSDate date] timeIntervalSince1970];
     gAwaitingTimeoutReported = NO;
     id sessionGen = gEngineState[@"sessionGen"];
-    NSDictionary *cmd = @{
+    NSMutableDictionary *cmd = [@{
         @"seq": @(gPendingSeq),
         @"res": res,
         @"action": action,
-        @"value": @(value),
+        @"value": (value ?: [NSNull null]),
         @"sessionGen": ([sessionGen isKindOfClass:[NSNumber class]] ? sessionGen : @(-1)),
         @"ts": @((long long)[[NSDate date] timeIntervalSince1970])
-    };
+    } mutableCopy];
+    if ([extra isKindOfClass:[NSDictionary class]]) { [cmd addEntriesFromDictionary:extra]; }
     if (!CGMWriteJSON(cmd, [gChosenMailbox stringByAppendingPathComponent:@"cmd.json"])) {
         gAwaitingCommandSeq = -1;
         CGMLog(@"command write failed");
         return;
     }
-    CGMLog(@"cmd#%ld -> %@ %@ %lld sessionGen=%@ (waiting for JS receipt)",
-           (long)gPendingSeq, res, action, value, cmd[@"sessionGen"]);
+    CGMLog(@"cmd#%ld -> %@ %@ value=%@ sessionGen=%@ (waiting for JS receipt)",
+           (long)gPendingSeq, res, action, cmd[@"value"], cmd[@"sessionGen"]);
+}
+
+static void CGMSendCommand(NSString *res, NSString *action, long long value) {
+    CGMSendCommandWithValue(res, action, @(value), nil);
+}
+
+static void CGMSendLocalRichesPurchase(void) {
+    NSString *orderId = [NSString stringWithFormat:@"cgm_local_riches_%lld", (long long)([[NSDate date] timeIntervalSince1970] * 1000.0)];
+    CGMSendCommandWithValue(@"purchase_sim", @"success", @0.99, @{
+        @"localOnly": @YES,
+        @"amount": @0.99,
+        @"orderId": orderId
+    });
 }
 
 static void CGMRequestProbe(void) {
@@ -1151,6 +1165,10 @@ static const int kCGMResCount = 5;
     self.vipCardButton.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
     [self.panel addSubview:self.vipCardButton];
 
+    self.richesSimButton = [self makeButton:@"礼包测试" color:[UIColor colorWithRed:0.76 green:0.52 blue:0.12 alpha:1.0] action:@selector(richesSimTapped)];
+    self.richesSimButton.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
+    [self.panel addSubview:self.richesSimButton];
+
     /* Deliberately NOT added to the panel: the status line under 自检 is hidden.
        Live state is still available in mod.log and ui_state.json. */
     self.statusLabel = [self makeLabel:@"" size:11.0 bold:NO color:[UIColor colorWithWhite:0.85 alpha:1.0]];
@@ -1271,9 +1289,10 @@ static const int kCGMResCount = 5;
     self.setButton.frame = CGRectMake(CGRectGetMaxX(self.addButton.frame) + 6.0, y, btnW, inputH);
     y += inputH + 8.0;
 
-    self.probeButton.frame = CGRectMake(pad, y, 60.0, 24.0);
-    self.iapToggleButton.frame = CGRectMake(CGRectGetMaxX(self.probeButton.frame) + 6.0, y, 96.0, 24.0);
-    self.vipCardButton.frame = CGRectMake(CGRectGetMaxX(self.iapToggleButton.frame) + 6.0, y, 96.0, 24.0);
+    self.probeButton.frame = CGRectMake(pad, y, 50.0, 24.0);
+    self.iapToggleButton.frame = CGRectMake(CGRectGetMaxX(self.probeButton.frame) + 6.0, y, 86.0, 24.0);
+    self.vipCardButton.frame = CGRectMake(CGRectGetMaxX(self.iapToggleButton.frame) + 6.0, y, 86.0, 24.0);
+    self.richesSimButton.frame = CGRectMake(CGRectGetMaxX(self.vipCardButton.frame) + 6.0, y, 70.0, 24.0);
     y += 24.0 + 8.0;
 
     CGFloat logH = panelH - y - pad;
@@ -1456,6 +1475,11 @@ static const int kCGMResCount = 5;
 - (void)vipCardTapped {
     [self appendLog:@"→ 直接触发月卡发放链路 setPlayerVipDataByGiftId + saveVipCardData"];
     CGMSendCommand(@"vip_card", @"buy", 30);
+}
+
+- (void)richesSimTapped {
+    [self appendLog:@"→ local-only 礼包测试：模拟 0.99 USD 成功，刷新财富日历解锁状态"];
+    CGMSendLocalRichesPurchase();
 }
 
 - (void)keyboardChanged:(NSNotification *)n {

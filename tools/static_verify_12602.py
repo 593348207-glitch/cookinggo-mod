@@ -132,10 +132,15 @@ def main() -> int:
     harness_text = harness.read_text(encoding="utf-8")
     assert "default-off Pay wrapper passes purchase calls to original implementation" in harness_text
     assert "purchase-success synthesis path" in harness_text
+    assert "purchase_sim" in bootstrap_text and "localOnly=true" in bootstrap_text
+    assert "iap_catalog" in bootstrap_text and "function iapCatalog()" in bootstrap_text
     static_doc = repo / "docs" / "IAP-RICHES-STATIC-12602.md"
     static_doc_text = static_doc.read_text(encoding="utf-8")
     assert "Pay success dispatch model" in static_doc_text
     assert "Riches / 财富日历 chain" in static_doc_text
+    package_doc = repo / "docs" / "IAP-RICHES-PACKAGE-CHAIN-12602.md"
+    package_doc_text = package_doc.read_text(encoding="utf-8")
+    assert "local-only 模拟礼包" in package_doc_text
     # Ensure the static payload is not the untouched original and is self-consistent.
     assert patched_jsc != jsc
     # Read the Debian ar container without depending on dpkg-deb/ar being on PATH.
@@ -166,6 +171,8 @@ def main() -> int:
         assert "kCGMScriptEngineGetInstanceOffset12602 = 0x1c263cc" in src_m
         assert "CGMInstallRuntimeEvalHook" in src_m
         assert "runtime evalString hook disabled by config" in src_m
+        assert "CGMSendLocalRichesPurchase" in src_m
+        assert "richesSimTapped" in src_m
         assert b"runtime evalString hook installed" in data_files[dylib_path]
         assert b"bootstrap deferred limit reached" in data_files[dylib_path], "packaged dylib must be rebuilt after JS retry changes"
         assert "candidate_evalString_function_va = 0x101c28a30" in runtime_doc

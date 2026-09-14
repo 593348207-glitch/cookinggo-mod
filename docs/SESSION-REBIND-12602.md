@@ -110,3 +110,11 @@ python tools\static_verify_12602.py --ipa "F:\测试\cookingGO\Cooking Go_1.26.0
   - `rt=1` 的 `js_hello/state/probe` 均为本次启动后的 fresh 时间戳，`version=1.3.8`、`sessionGen=1`、`state.ready=true`。
 - 账号切换与资源/IAP/月卡按钮尚未操作，等待用户下一步测试。
 
+## 2026-09-14 账号切换现象
+
+- 用户截图证据：`G:\Documents\Tencent Files\593348207\nt_qq\nt_data\Pic\2026-09\Ori\78d8301073f899366d896186ecff6ce1.png`。
+- 现象：账号切换后界面显示 `会话=session-2`，钻石命令 `1435 + 100` 发出后停在“等待 JS 回执”，约 3.0 秒后显示命令超时；没有闪退。
+- 用户复测：关闭游戏并重启后命令恢复正常。
+- 结论：安装、签名、dyld 和冷启动注入路径已稳定；剩余问题是进程内 `session-1 -> session-2` 后 native command 与 JS fresh rebind/mailbox receipt 的竞态。重启会重新建立 `evalString -> JS bootstrap -> session-1`，因此恢复。
+- 当前不要把该现象记为资源逻辑失败，也不要要求用户重复测试 IAP；后续修复重点是 session rebind 完成前排队命令、等待当前 `js_hello/state/probe` fresh receipt 后再写 `cmd.json`，并在超时后允许一次同 session 重试。
+
