@@ -118,3 +118,26 @@ python tools\static_verify_12602.py --ipa "F:\测试\cookingGO\Cooking Go_1.26.0
 - 结论：安装、签名、dyld 和冷启动注入路径已稳定；剩余问题是进程内 `session-1 -> session-2` 后 native command 与 JS fresh rebind/mailbox receipt 的竞态。重启会重新建立 `evalString -> JS bootstrap -> session-1`，因此恢复。
 - 当前不要把该现象记为资源逻辑失败，也不要要求用户重复测试 IAP；后续修复重点是 session rebind 完成前排队命令、等待当前 `js_hello/state/probe` fresh receipt 后再写 `cmd.json`，并在超时后允许一次同 session 重试。
 
+## 2026-09-21 账号切换后 JS 回执竞态修复
+
+根因确认：JS 在 session rebind 时清理 `cmd.json/res.json/state.json`，native 仍可能按旧的 `gEngineState/sessionGen` 写入命令并进入等待；命令被清理或收到旧 session 回执后，只能等到 3 秒超时。
+
+本轮修复：
+
+- `src/CGMBootstrap.js` 增加 `gSessionReady` 两阶段握手。账号切换的第一个 tick 发布 `ready=false/rebind=true`；下一稳定 tick 重写 `js_hello.json` 并发布 `ready=true/rebind=false`，未 ready 时不读取命令。
+- `src/CookingGoMod.m` 发送前同时校验 `js_hello/state` 的 `sessionGen/sessionKey` 和 ready 状态；rebind 窗口内的命令进入 native 单槽队列，当前 session ready 后再写入 `cmd.json`。
+- session 切换时把正在等待的命令保留为单次 retry；旧 session 回执只有在确实对应旧 awaiting command 时才触发 retry，避免 seq 重用误伤新命令。
+- 首次 3 秒无回执自动按当前 session 重发一次；第二次仍无回执才报告最终超时并清除等待状态。
+- 新增 mock 用例 `account rebind publishes a not-ready handshake before the new session becomes command-ready`。
+
+本地验证：
+
+- `node --check src/CGMBootstrap.js`：PASS
+- `node tools/mock_cgm_bootstrap.js`：`23/23 tests passed`
+- Python tools `py_compile`：PASS
+- patched JSC SHA-256：`5496b71e00108f15362b0ac54eed453264de434165e31ed553c4050efe0f22db`
+- Windows 静态测试包：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.4.1-session-fix-js-test.deb`
+- 静态测试包 SHA-256：`810bad5f6fa00b937cb7391660f10abddcefc3d781a28060d8c8a0058115aba8`
+- `static_verify_12602.py`：`static closure: OK`
+
+边界：Windows 静态测试包复用原 1.4.1 dylib，只同步 JS/JSC；`CookingGoMod.m` 的 native queue/retry 修复必须经 macOS workflow 重编 dylib 后，才可进行最终真机 A→B→A 验收。

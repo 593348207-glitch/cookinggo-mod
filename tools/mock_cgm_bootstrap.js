@@ -443,6 +443,30 @@ test('Riches persistence is called after a simulated purchase and account sessio
   assert.equal(state.riches.track0Unlocked, true);
 });
 
+test('account rebind publishes a not-ready handshake before the new session becomes command-ready', () => {
+  const a = makeManager({ accountId: 'A' });
+  const b = makeManager({ accountId: 'B' });
+  const h = runBootstrap({ managerBundle: a, files: new Map([['/mock/Documents/cookingmod/mod.json', '{}']]) });
+  h.swapManager(b);
+  h.runTimer(1);
+  let hello = readJsonFile(h, 'js_hello.json');
+  let state = readJsonFile(h, 'state.json');
+  assert.equal(hello.sessionGen, 2);
+  assert.equal(hello.ready, false);
+  assert.equal(hello.rebind, true);
+  assert.equal(state.sessionGen, 2);
+  assert.equal(state.ready, false);
+  assert.equal(state.rebind, true);
+
+  h.runTimer(1);
+  hello = readJsonFile(h, 'js_hello.json');
+  state = readJsonFile(h, 'state.json');
+  assert.equal(hello.ready, true);
+  assert.equal(hello.rebind, false);
+  assert.equal(state.ready, true);
+  assert.equal(state.rebind, false);
+});
+
 test('stale purchase_sim session commands are rejected before mutation', () => {
   const a = makeManager({ accountId: 'A' });
   const b = makeManager({ accountId: 'B' });

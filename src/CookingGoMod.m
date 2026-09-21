@@ -39,7 +39,7 @@
 #import "CGMBootstrap.generated.h"
 
 #ifndef CGM_VERSION
-#define CGM_VERSION @"1.4.1"
+#define CGM_VERSION @"1.4.2"
 #endif
 
 static NSString * const kCGMTargetBundle = @"com.airplanecooking.chef.kitchen.restaurant.diner";
@@ -732,6 +732,8 @@ static const NSTimeInterval kCGMCommandTimeout = 3.0;
 static NSDictionary *gEngineState = nil;
 static BOOL gEngineReady = NO;
 static NSString *gChosenMailbox = nil;
+static NSDictionary *gAwaitingCommand = nil;
+static NSDictionary *gQueuedCommand = nil;
 
 static BOOL CGMEnsureRuntimeMailbox(void) {
     NSString *home = NSHomeDirectory();
@@ -762,32 +764,96 @@ static NSString *CGMResolveActiveMailbox(void) {
     return gMailboxPath;
 }
 
+static BOOL CGMReadReadySession(NSDictionary **stateOut) {
+    if (!gChosenMailbox.length) { return NO; }
+    NSDictionary *hello = CGMReadJSON([gChosenMailbox stringByAppendingPathComponent:@"js_hello.json"]);
+    NSDictionary *state = CGMReadJSON([gChosenMailbox stringByAppendingPathComponent:@"state.json"]);
+    if (![hello isKindOfClass:[NSDictionary class]] || ![state isKindOfClass:[NSDictionary class]]) { return NO; }
+    NSNumber *helloGen = hello[@"sessionGen"];
+    NSNumber *stateGen = state[@"sessionGen"];
+    NSString *helloKey = hello[@"sessionKey"];
+    NSString *stateKey = state[@"sessionKey"];
+    if (![helloGen isKindOfClass:[NSNumber class]] || ![stateGen isKindOfClass:[NSNumber class]] ||
+        helloGen.integerValue != stateGen.integerValue ||
+        ![helloKey isKindOfClass:[NSString class]] || ![stateKey isKindOfClass:[NSString class]] ||
+        ![helloKey isEqualToString:stateKey]) {
+        return NO;
+    }
+    id helloReady = hello[@"ready"];
+    BOOL helloReadyOK = !helloReady || ([helloReady isKindOfClass:[NSNumber class]] && [helloReady boolValue]);
+    BOOL ready = [state[@"ready"] boolValue] && ![state[@"rebind"] boolValue] && helloReadyOK;
+    if (!ready) { return NO; }
+    if (stateOut) { *stateOut = state; }
+    return YES;
+}
+
+static BOOL CGMWriteCommandBase(NSDictionary *base) {
+    if (!gChosenMailbox.length || ![base isKindOfClass:[NSDictionary class]]) { return NO; }
+    NSNumber *sessionGen = gEngineState[@"sessionGen"];
+    if (![sessionGen isKindOfClass:[NSNumber class]]) { return NO; }
+    gPendingSeq++;
+    NSMutableDictionary *cmd = [base mutableCopy];
+    cmd[@"seq"] = @(gPendingSeq);
+    cmd[@"sessionGen"] = sessionGen;
+    cmd[@"ts"] = @((long long)[[NSDate date] timeIntervalSince1970]);
+    gAwaitingCommandSeq = gPendingSeq;
+    gAwaitingCommandSince = [[NSDate date] timeIntervalSince1970];
+    gAwaitingTimeoutReported = NO;
+    gAwaitingCommand = [cmd copy];
+    if (!CGMWriteJSON(cmd, [gChosenMailbox stringByAppendingPathComponent:@"cmd.json"])) {
+        gAwaitingCommand = nil;
+        gAwaitingCommandSeq = -1;
+        CGMLog(@"command write failed");
+        return NO;
+    }
+    CGMLog(@"cmd#%ld -> %@ %@ value=%@ sessionGen=%@ (waiting for JS receipt)",
+           (long)gPendingSeq, cmd[@"res"], cmd[@"action"], cmd[@"value"], cmd[@"sessionGen"]);
+    return YES;
+}
+
+static void CGMQueueAwaitingCommandForRetry(void) {
+    if (![gAwaitingCommand isKindOfClass:[NSDictionary class]]) { return; }
+    NSInteger retryCount = [gAwaitingCommand[@"retryCount"] integerValue];
+    if (!gQueuedCommand && retryCount < 1) {
+        NSMutableDictionary *retry = [gAwaitingCommand mutableCopy];
+        [retry removeObjectForKey:@"seq"];
+        [retry removeObjectForKey:@"sessionGen"];
+        [retry removeObjectForKey:@"ts"];
+        retry[@"retryCount"] = @(retryCount + 1);
+        gQueuedCommand = [retry copy];
+    }
+    gAwaitingCommand = nil;
+    gAwaitingCommandSeq = -1;
+    gAwaitingCommandSince = 0;
+    gAwaitingTimeoutReported = NO;
+}
+
+static void CGMFlushQueuedCommand(void) {
+    if (!gEngineReady || ![gQueuedCommand isKindOfClass:[NSDictionary class]]) { return; }
+    NSDictionary *queued = gQueuedCommand;
+    gQueuedCommand = nil;
+    if (!CGMWriteCommandBase(queued)) { gQueuedCommand = queued; }
+}
+
 static void CGMSendCommandWithValue(NSString *res, NSString *action, id value, NSDictionary *extra) {
     CGMEnsureRuntimeMailbox();
     NSString *resolved = CGMResolveActiveMailbox();
     if (resolved.length) { gChosenMailbox = resolved; }
-    if (!gChosenMailbox) { CGMLog(@"bridge not ready: no mailbox"); return; }
-    gPendingSeq++;
-    gAwaitingCommandSeq = gPendingSeq;
-    gAwaitingCommandSince = [[NSDate date] timeIntervalSince1970];
-    gAwaitingTimeoutReported = NO;
-    id sessionGen = gEngineState[@"sessionGen"];
-    NSMutableDictionary *cmd = [@{
-        @"seq": @(gPendingSeq),
-        @"res": res,
-        @"action": action,
-        @"value": (value ?: [NSNull null]),
-        @"sessionGen": ([sessionGen isKindOfClass:[NSNumber class]] ? sessionGen : @(-1)),
-        @"ts": @((long long)[[NSDate date] timeIntervalSince1970])
+    NSMutableDictionary *base = [@{
+        @"res": (res ?: @""),
+        @"action": (action ?: @""),
+        @"value": (value ?: [NSNull null])
     } mutableCopy];
-    if ([extra isKindOfClass:[NSDictionary class]]) { [cmd addEntriesFromDictionary:extra]; }
-    if (!CGMWriteJSON(cmd, [gChosenMailbox stringByAppendingPathComponent:@"cmd.json"])) {
-        gAwaitingCommandSeq = -1;
-        CGMLog(@"command write failed");
+    if ([extra isKindOfClass:[NSDictionary class]]) { [base addEntriesFromDictionary:extra]; }
+    NSDictionary *readyState = nil;
+    if (!gChosenMailbox.length || !CGMReadReadySession(&readyState)) {
+        gQueuedCommand = [base copy];
+        CGMLog(@"command queued until JS session ready res=%@ action=%@", res, action);
         return;
     }
-    CGMLog(@"cmd#%ld -> %@ %@ value=%@ sessionGen=%@ (waiting for JS receipt)",
-           (long)gPendingSeq, res, action, cmd[@"value"], cmd[@"sessionGen"]);
+    gEngineState = readyState;
+    gEngineReady = YES;
+    if (!CGMWriteCommandBase(base)) { gQueuedCommand = [base copy]; }
 }
 
 static void CGMSendCommand(NSString *res, NSString *action, long long value) {
@@ -1556,6 +1622,10 @@ static void CGMResetBridgeForSession(NSInteger sessionGen, NSString *sessionKey)
     if (sessionGen < 0 || sessionGen == gLastSessionGen) { return; }
     NSInteger previous = gLastSessionGen;
     gLastSessionGen = sessionGen;
+    if (gAwaitingCommand) {
+        CGMQueueAwaitingCommandForRetry();
+        CGMLog(@"session change queued in-flight command for one retry");
+    }
     gLastSeq = -1;
     gPendingSeq = 0;
     gAwaitingCommandSeq = -1;
@@ -1589,17 +1659,37 @@ static void CGMTick(void) {
         if ([sessionGenObj isKindOfClass:[NSNumber class]]) {
             CGMResetBridgeForSession([sessionGenObj integerValue], sessionSource[@"sessionKey"]);
         }
+        BOOL sameSession = NO;
+        if ([hello isKindOfClass:[NSDictionary class]] && [state isKindOfClass:[NSDictionary class]]) {
+            sameSession = [hello[@"sessionGen"] isKindOfClass:[NSNumber class]] &&
+                [state[@"sessionGen"] isKindOfClass:[NSNumber class]] &&
+                [hello[@"sessionGen"] integerValue] == [state[@"sessionGen"] integerValue] &&
+                [hello[@"sessionKey"] isKindOfClass:[NSString class]] &&
+                [state[@"sessionKey"] isKindOfClass:[NSString class]] &&
+                [hello[@"sessionKey"] isEqualToString:state[@"sessionKey"]];
+        }
         if (state) {
             gEngineState = state;
             id ready = state[@"ready"];
-            gEngineReady = [ready isKindOfClass:[NSNumber class]] ? [ready boolValue] : NO;
+            id helloReady = hello[@"ready"];
+            BOOL helloReadyOK = !helloReady || ([helloReady isKindOfClass:[NSNumber class]] && [helloReady boolValue]);
+            gEngineReady = sameSession && [ready isKindOfClass:[NSNumber class]] && [ready boolValue] &&
+                ![state[@"rebind"] boolValue] && helloReadyOK;
+        } else {
+            gEngineState = nil;
+            gEngineReady = NO;
         }
+        if (gEngineReady) { CGMFlushQueuedCommand(); }
 
         NSDictionary *res = CGMReadJSON([gChosenMailbox stringByAppendingPathComponent:@"res.json"]);
         if (res) {
             NSInteger resultSession = [res[@"sessionGen"] integerValue];
             NSInteger seq = [res[@"seq"] integerValue];
             if (resultSession > 0 && gLastSessionGen > 0 && resultSession != gLastSessionGen) {
+                NSInteger awaitingSession = [gAwaitingCommand[@"sessionGen"] integerValue];
+                if (gAwaitingCommandSeq == seq && awaitingSession == resultSession) {
+                    CGMQueueAwaitingCommandForRetry();
+                }
                 CGMLog(@"ignore stale result seq=%ld sessionGen=%ld current=%ld",
                        (long)seq, (long)resultSession, (long)gLastSessionGen);
             } else if (seq != gLastSeq) {
@@ -1628,6 +1718,7 @@ static void CGMTick(void) {
                                     (long)seq, res[@"error"] ?: @"unknown"]];
                 }
                 if (gAwaitingCommandSeq == seq) {
+                    gAwaitingCommand = nil;
                     gAwaitingCommandSeq = -1;
                     gAwaitingCommandSince = 0;
                     gAwaitingTimeoutReported = NO;
@@ -1636,12 +1727,25 @@ static void CGMTick(void) {
         }
         if (gAwaitingCommandSeq >= 0 && !gAwaitingTimeoutReported &&
             ([[NSDate date] timeIntervalSince1970] - gAwaitingCommandSince) >= kCGMCommandTimeout) {
-            gAwaitingTimeoutReported = YES;
-            NSString *session = gEngineState[@"sessionKey"] ?: @"<unknown>";
-            NSString *msg = [NSString stringWithFormat:@"命令 #%ld 超时（%.1fs）：会话=%@，检查 JS/mailbox 是否一致",
-                              (long)gAwaitingCommandSeq, kCGMCommandTimeout, session];
-            CGMLog(@"%@", msg);
-            [gVC appendLog:msg];
+            NSInteger timedOutSeq = gAwaitingCommandSeq;
+            if ([gAwaitingCommand[@"retryCount"] integerValue] < 1) {
+                CGMQueueAwaitingCommandForRetry();
+                NSString *session = gEngineState[@"sessionKey"] ?: @"<unknown>";
+                NSString *msg = [NSString stringWithFormat:@"命令 #%ld 等待超时，已排队按当前会话重试：会话=%@",
+                                  (long)timedOutSeq, session];
+                CGMLog(@"%@", msg);
+                [gVC appendLog:msg];
+            } else {
+                gAwaitingTimeoutReported = YES;
+                NSString *session = gEngineState[@"sessionKey"] ?: @"<unknown>";
+                NSString *msg = [NSString stringWithFormat:@"命令 #%ld 超时（%.1fs）：会话=%@，JS/mailbox 未返回回执",
+                                  (long)timedOutSeq, kCGMCommandTimeout, session];
+                CGMLog(@"%@", msg);
+                [gVC appendLog:msg];
+                gAwaitingCommand = nil;
+                gAwaitingCommandSeq = -1;
+                gAwaitingCommandSince = 0;
+            }
         }
 
         NSDictionary *probe = CGMReadJSON([gChosenMailbox stringByAppendingPathComponent:@"probe.json"]);

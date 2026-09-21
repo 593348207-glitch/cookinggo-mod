@@ -15,7 +15,7 @@
  *   MapDataMgr   : get/set mapCoinNum
  * ========================================================================= */
 ;(function cookingModBootstrapEntry() {
-  var VERSION = "1.4.1";
+  var VERSION = "1.4.2";
   var TAG = "[CookingMod]";
 
   function log(s) {
@@ -104,6 +104,7 @@
   var G = null, APP = null, CORE = null, PD = null, MD = null;
   var gSessionGen = 0;
   var gSessionKey = "session-0";
+  var gSessionReady = true;
   var gBound = null;
   var gHookedPay = null, gHookedIOS = null;
   var lastSeq = -1;
@@ -179,8 +180,10 @@
 
   function resetSessionState(reason, refs) {
     var oldKey = gSessionKey;
+    var wasBound = !!gBound;
     gSessionGen++;
     gSessionKey = "session-" + gSessionGen;
+    gSessionReady = !wasBound;
     lastSeq = -1;
     gProbeSeq = 0;
     try { window.__cookingModProbeSeq = null; } catch (e) {}
@@ -198,6 +201,7 @@
     });
     writeJson(DIR + "js_hello.json", {
       version: VERSION, dir: DIR, sessionGen: gSessionGen, sessionKey: gSessionKey,
+      ready: gSessionReady, rebind: !gSessionReady,
       previousSession: oldKey, reason: reason || "binding changed", ts: now()
     });
     if (gIap) { saveIapState(); }
@@ -242,6 +246,16 @@
       gBound = refs;
       installIapHook();
       log("bound session=" + gSessionKey + " Manager.PlayerData/MapData/Pay/VipCard refreshed");
+    } else if (!gSessionReady) {
+      /* Publish one complete state tick before accepting commands after a
+         rebind. Native uses this handshake to avoid the mailbox cleanup
+         race during account switching. */
+      gSessionReady = true;
+      writeJson(DIR + "js_hello.json", {
+        version: VERSION, dir: DIR, sessionGen: gSessionGen, sessionKey: gSessionKey,
+        ready: true, rebind: false, reason: "session ready", ts: now()
+      });
+      log("session ready " + gSessionKey);
     }
     gBindWhy = "ok";
     return true;
@@ -857,9 +871,9 @@
   }
 
   function snapshot() {
-    if (!bind()) { return null; }
+    if (!gBound || !PD || !MD) { return null; }
     installIapHook();
-    var t = table(), out = { ready: true, ts: now(), version: VERSION, why: gBindWhy, sessionGen: gSessionGen, sessionKey: gSessionKey };
+    var t = table(), out = { ready: gSessionReady, rebind: !gSessionReady, ts: now(), version: VERSION, why: gBindWhy, sessionGen: gSessionGen, sessionKey: gSessionKey };
     for (var k in t) {
       try { out[k] = Number(t[k].get()); } catch (e) { out[k] = null; out[k + "_err"] = str(e); }
     }
@@ -991,7 +1005,7 @@
           probe();
           log("probe refreshed after bind");
         }
-        var cmd = readJson(DIR + "cmd.json");
+        var cmd = gSessionReady ? readJson(DIR + "cmd.json") : null;
         if (cmd && typeof cmd.seq === "number" && cmd.seq !== lastSeq) {
           lastSeq = cmd.seq;
           var res = execute(cmd);

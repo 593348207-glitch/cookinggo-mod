@@ -153,3 +153,11 @@ F:\测试\cookingGO\
 - 已生成 Windows 静态测试 DEB：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.3.8_iphoneos-arm64-js-test.deb`。该包复用旧 1.3.7 dylib，仅能验证新 JS/JSC/control；正式设备验收必须使用 macOS workflow 编译出的新 dylib。
 - 真机当前报告 `F:\测试\cookingGO\_work\postfix_verify_12602_v138_js_test_current.json`：base launch `lv=0/dyld=0`，但 fresh tweak load marker 未观察到，mailbox 仍为 1.3.7，因此没有把新逻辑记为 device PASS。
 - 新增说明：`docs/SESSION-REBIND-12602.md`。
+
+## 2026-09-21 账号切换 JS 回执修复（待 macOS 正式构建）
+
+- 已修复 `session-1 -> session-2` mailbox 竞态：JS 两阶段 ready/rebind 握手，native 发送前校验 `js_hello/state` 一致性，rebind 窗口排队，session 切换/首次超时最多自动重试一次。
+- 修改文件：`src/CGMBootstrap.js`、`src/CookingGoMod.m`、`tools/mock_cgm_bootstrap.js`，并重新生成 `src/CGMBootstrap.generated.h` 与 `packaging/CookingGoMod.index12602.jsc`。
+- 本地回归：`23/23 tests passed`；静态闭环：`static closure: OK`。
+- 静态测试包：`F:\测试\cookingGO\dist\com.seagull.cookinggomod_1.4.1-session-fix-js-test.deb`，SHA-256 `810BAD5F6FA00B937CB7391660F10ABDDCEFC3D781A28060D8C8A0058115ABA8`。
+- 该测试包复用旧 dylib，不能证明 native 修复已上机；下一步在 macOS workflow 编译正式 dylib/DEB，再做不重启游戏的 A→B→A：切号后立即点击资源按钮，确认先排队、ready 后收到当前 session 回执且无永久“等待 JS 回执”。
