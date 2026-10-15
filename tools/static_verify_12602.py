@@ -167,7 +167,7 @@ def main() -> int:
     if version_tuple(deb_version) >= (1, 3, 2):
         src_m = (repo / "src" / "CookingGoMod.m").read_text(encoding="utf-8")
         runtime_doc = (repo / "docs" / "RUNTIME-HOOK-12602.md").read_text(encoding="utf-8")
-        assert "rt=0" in cfg_text, "packaged cfg must keep runtime hook default-off"
+        assert "rt=1" in cfg_text, "packaged cfg must enable the JS runtime bridge"
         assert "kCGMEvalStringOffset12602 = 0x1c28a30" in src_m
         assert "kCGMScriptEngineGetInstanceOffset12602 = 0x1c263cc" in src_m
         assert "CGMInstallRuntimeEvalHook" in src_m
@@ -188,7 +188,7 @@ def main() -> int:
     print("patched plain JS bytes:", len(patched_plain))
     print("deb sha256:", hashlib.sha256(raw).hexdigest())
     print("deb version:", deb_version)
-    print("packaged cfg rt:", "rt=0" if "rt=0" in cfg_text else "<missing>")
+    print("packaged cfg rt:", "rt=1" if "rt=1" in cfg_text else "<missing>")
     print("mock harness:", str(repo / "tools" / "mock_cgm_bootstrap.js"))
     print("static report:", str(repo / "docs" / "IAP-RICHES-STATIC-12602.md"))
     print("static closure: OK")
